@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Infra Health Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f172a;
+      --surface:  #1e293b;
+      --surface2: #263548;
+      --border:   #334155;
+      --text:     #f1f5f9;
+      --muted:    #94a3b8;
+      --blue:     #3b82f6;
+      --up:       #22c55e;
+      --up-bg:    #052e16;
+      --down:     #ef4444;
+      --down-bg:  #450a0a;
+      --deg:      #f97316;
+      --deg-bg:   #431407;
+      --warn:     #f59e0b;
+      --unk:      #64748b;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Header ────────────────────────────────── */
+    header {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(15,23,42,0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .logo {
+      font-weight: 700; font-size: 15px; letter-spacing: -0.02em;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .logo span { color: var(--blue); }
+
+    .live-dot {
+      width: 8px; height: 8px;
+      background: var(--up);
+      border-radius: 50%;
+      box-shadow: 0 0 6px var(--up);
+      animation: live-pulse 2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--up); }
+      50%       { opacity: 0.5; box-shadow: 0 0 16px var(--up), 0 0 24px var(--up); }
+    }
+
+    .header-right { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+    .pill { background: var(--surface); border: 1px solid var(--border); border-radius: 99px; padding: 3px 12px; }
+
+    /* ── Status bar ─────────────────────────────── */
+    .status-bar {
+      padding: 9px 2rem;
+      font-size: 13px; font-weight: 500;
+      display: flex; align-items: center; gap: 8px;
+      transition: background .4s, color .4s;
+    }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .status-bar.all-good   { background: rgba(34,197,94,.08);  color: var(--up);   border-bottom: 1px solid rgba(34,197,94,.15); }
+    .status-bar.has-down   { background: rgba(239,68,68,.08);  color: var(--down); border-bottom: 1px solid rgba(239,68,68,.15); }
+    .status-bar.has-deg    { background: rgba(249,115,22,.08); color: var(--deg);  border-bottom: 1px solid rgba(249,115,22,.15); }
+    .status-bar.has-unk    { background: rgba(100,116,139,.06);color: var(--unk);  border-bottom: 1px solid var(--border); }
+
+    /* ── Main ───────────────────────────────────── */
+    main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+    .summary {
+      display: flex; gap: 2.5rem; margin-bottom: 2rem;
+      padding-bottom: 2rem; border-bottom: 1px solid var(--border);
+    }
+    .stat-val { font-size: 2rem; font-weight: 700; line-height: 1; }
+    .stat-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 4px; }
+
+    /* ── Grid ───────────────────────────────────── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(285px, 1fr));
+      gap: 1rem;
+    }
+
+    /* ── Card ───────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.1rem 1.25rem;
+      cursor: pointer;
+      transition: background .15s, border-color .15s, transform .15s, box-shadow .15s;
+      display: flex; flex-direction: column; gap: 10px;
+      position: relative;
+    }
+    .card:hover {
+      background: var(--surface2);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(0,0,0,.35);
+    }
+    .card.active { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+    .card[data-status="up"]       { border-left: 3px solid var(--up); }
+    .card[data-status="down"]     { border-left: 3px solid var(--down); }
+    .card[data-status="degraded"] { border-left: 3px solid var(--deg); }
+    .card[data-status="unknown"]  { border-left: 3px solid var(--unk); }
+
+    .card-top { display: flex; align-items: center; justify-content: space-between; }
+    .card-name-row { display: flex; align-items: center; gap: 7px; }
+    .svc-icon { font-size: 15px; line-height: 1; }
+    .card-name { font-weight: 600; font-size: 15px; }
+
+    .badge {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .06em; padding: 2px 8px; border-radius: 99px;
+    }
+    .badge-up       { background: var(--up-bg);   color: var(--up); }
+    .badge-down     { background: var(--down-bg);  color: var(--down); }
+    .badge-degraded { background: var(--deg-bg);   color: var(--deg); }
+    .badge-unknown  { background: var(--surface2); color: var(--unk); border: 1px solid var(--border); }
+
+    .card-target {
+      font-size: 12px; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .chip {
+      display: inline-block; font-size: 10px;
+      background: var(--bg); color: var(--muted);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 1px 6px; margin-right: 4px;
+    }
+
+    /* sparkline */
+    .sparkline-wrap { height: 34px; display: flex; align-items: center; }
+    .spark-empty { font-size: 11px; color: var(--unk); }
+
+    .card-mid { display: flex; align-items: flex-end; justify-content: space-between; }
+    .latency { font-size: 22px; font-weight: 700; }
+    .latency-unit { font-size: 12px; color: var(--muted); }
+    .latency-null { font-size: 14px; color: var(--muted); }
+    .card-time { font-size: 11px; color: var(--muted); text-align: right; line-height: 1.7; }
+
+    /* hover stats */
+    .card-stats {
+      display: none;
+      font-size: 11px; color: var(--muted);
+      gap: 12px; padding-top: 2px;
+    }
+    .card:hover .card-stats { display: flex; }
+    .stat-seg { display: flex; gap: 4px; align-items: center; }
+    .stat-seg b { color: var(--text); }
+
+    /* uptime bar */
+    .uptime-bar-wrap { display: flex; align-items: center; gap: 8px; }
+    .uptime-bar-track { flex: 1; height: 3px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+    .uptime-bar-fill  { height: 100%; border-radius: 2px; transition: width .5s ease; }
+    .uptime-label     { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+    .card-actions { display: flex; gap: 6px; }
+
+    /* ── Buttons ────────────────────────────────── */
+    button {
+      font-family: inherit; font-size: 12px; font-weight: 500;
+      border-radius: 6px; border: 1px solid var(--border);
+      padding: 5px 12px; cursor: pointer;
+      transition: background .12s, color .12s, opacity .12s;
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .btn-primary { background: var(--blue); color: #fff; border-color: transparent; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-ghost { background: transparent; color: var(--muted); }
+    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
+    .btn-close {
+      background: transparent; color: var(--muted);
+      border: none; font-size: 18px; padding: 4px 8px; line-height: 1; border-radius: 6px;
+    }
+    .btn-close:hover { background: var(--surface2); color: var(--text); }
+
+    /* ── Sidebar backdrop ───────────────────────── */
+    .sidebar-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.55);
+      backdrop-filter: blur(3px);
+      z-index: 40;
+      opacity: 0; pointer-events: none;
+      transition: opacity .25s;
+    }
+    .sidebar-backdrop.open { opacity: 1; pointer-events: auto; }
+
+    /* ── Sidebar ────────────────────────────────── */
+    .sidebar {
+      position: fixed; right: 0; top: 0; bottom: 0;
+      width: 520px; max-width: 95vw;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      z-index: 50;
+      display: flex; flex-direction: column;
+      transform: translateX(100%);
+      transition: transform .26s cubic-bezier(.4,0,.2,1);
+      box-shadow: -12px 0 48px rgba(0,0,0,.45);
+    }
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky; top: 0; z-index: 1;
+      flex-shrink: 0;
+    }
+    .sidebar-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+
+    .sidebar-body { flex: 1; overflow-y: auto; padding: 1.25rem 1.5rem; }
+
+    .chart-wrap {
+      position: relative; height: 200px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    /* ── Table ──────────────────────────────────── */
+    .table-wrap { max-height: 340px; overflow-y: auto; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      position: sticky; top: 0;
+      text-align: left; color: var(--muted);
+      font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+      padding: 0 10px 8px; border-bottom: 1px solid var(--border);
+      font-weight: 500; background: var(--surface);
+    }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--surface2); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+
+    .empty { text-align: center; color: var(--muted); padding: 2.5rem; font-size: 13px; }
+
+    .error-bar {
+      background: var(--down-bg); border: 1px solid var(--down);
+      border-radius: 8px; padding: 10px 14px; margin-bottom: 1rem;
+      color: #fca5a5; font-size: 13px;
+    }
+
+    /* ── Toasts ─────────────────────────────────── */
+    #toast-container {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      z-index: 100;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      min-width: 240px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.45);
+      transform: translateX(calc(100% + 24px));
+      opacity: 0;
+      transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s;
+      pointer-events: auto;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .toast.show { transform: translateX(0); opacity: 1; }
+    .toast-success { border-left: 3px solid var(--up); }
+    .toast-error   { border-left: 3px solid var(--down); }
+    .toast-info    { border-left: 3px solid var(--blue); }
+
+    /* ── Animations ─────────────────────────────── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block; width: 11px; height: 11px;
+      border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+      border-radius: 50%; animation: spin .6s linear infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+    .pulse { animation: pulse 1.5s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="live-dot"></div>
+    Infra <span>Health</span> Monitor
+  </div>
+  <div class="header-right">
+    <span id="last-updated"></span>
+    <span class="pill">↻ <span id="countdown">30</span>s</span>
+  </div>
+</header>
+
+<div id="status-bar" class="status-bar has-unk">
+  <div class="status-dot"></div>
+  <span id="status-text">Loading…</span>
+</div>
+
+<main>
+  <div id="error-bar" class="error-bar" hidden></div>
+  <div id="summary" class="summary"></div>
+  <div id="grid"    class="grid"></div>
+</main>
+
+<div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+<aside id="sidebar" class="sidebar">
+  <div class="sidebar-head">
+    <div class="sidebar-title">
+      <span id="sidebar-icon"></span>
+      <span id="sidebar-svc-name"></span>
+    </div>
+    <button class="btn-close" id="btn-close-sidebar">✕</button>
+  </div>
+  <div class="sidebar-body">
+    <div class="chart-wrap"><canvas id="latency-chart"></canvas></div>
+    <div id="sidebar-content"></div>
+  </div>
+</aside>
+
+<div id="toast-container"></div>
+
+<script>
+  let services     = [];
+  let historyCache = {};   // name → rows[]
+  let selected     = null;
+  let countdown    = 30;
+  let timer        = null;
+  let chart        = null;
+
+  const TYPE_ICON = { http: '🌐', tcp: '🔌', system: '💻' };
+
+  // ── Sidebar / keyboard wiring ───────────────────────────────────────────────
+  document.getElementById('btn-close-sidebar').addEventListener('click', closeSidebar);
+  document.getElementById('sidebar-backdrop').addEventListener('click', closeSidebar);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && selected) closeSidebar(); });
+
+  // ── API ─────────────────────────────────────────────────────────────────────
+  async function api(path, opts) {
+    const res = await fetch(path, opts);
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    return res.json();
+  }
+
+  // ── Services load ───────────────────────────────────────────────────────────
+  async function loadServices() {
+    try {
+      services = await api('/services');
+      renderSummary();
+      renderStatusBar();
+      renderGrid();
+      updateFavicon(services.some(s => s.status === 'down'));
+      hideError();
+      document.getElementById('last-updated').textContent =
+        'Updated ' + new Date().toLocaleTimeString();
+      loadAllHistory();
+    } catch (e) {
+      showError('Cannot reach API — ' + e.message);
+    }
+  }
+
+  async function loadAllHistory() {
+    await Promise.allSettled(services.map(async svc => {
+      try {
+        historyCache[svc.name] = await api(
+          '/history?service=' + encodeURIComponent(svc.name) + '&limit=50'
+        );
+      } catch {
+        historyCache[svc.name] = [];
+      }
+    }));
+    renderGrid();
+  }
+
+  // ── Summary ─────────────────────────────────────────────────────────────────
+  function renderSummary() {
+    const c = counts();
+    document.getElementById('summary').innerHTML =
+      `<div><div class="stat-val">${services.length}</div><div class="stat-lbl">Services</div></div>
+       <div><div class="stat-val" style="color:var(--up)">${c.up}</div><div class="stat-lbl">Up</div></div>
+       <div><div class="stat-val" style="color:var(--down)">${c.down}</div><div class="stat-lbl">Down</div></div>
+       <div><div class="stat-val" style="color:var(--deg)">${c.degraded}</div><div class="stat-lbl">Degraded</div></div>
+       <div><div class="stat-val" style="color:var(--unk)">${c.unknown}</div><div class="stat-lbl">Unknown</div></div>`;
+  }
+
+  function renderStatusBar() {
+    const bar = document.getElementById('status-bar');
+    const txt = document.getElementById('status-text');
+    const c   = counts();
+    bar.className = 'status-bar';
+    if (!services.length) {
+      bar.classList.add('has-unk'); txt.textContent = 'No services configured';
+    } else if (c.down > 0) {
+      bar.classList.add('has-down');
+      txt.textContent = c.down === 1 ? '1 service is down' : `${c.down} services are down`;
+    } else if (c.degraded > 0) {
+      bar.classList.add('has-deg');
+      txt.textContent = c.degraded === 1 ? '1 service is degraded' : `${c.degraded} services are degraded`;
+    } else if (c.up === 0) {
+      bar.classList.add('has-unk'); txt.textContent = 'Waiting for first check…';
+    } else {
+      bar.classList.add('all-good'); txt.textContent = 'All systems operational';
+    }
+  }
+
+  function counts() {
+    const c = { up: 0, down: 0, degraded: 0, unknown: 0 };
+    services.forEach(s => { c[s.status] = (c[s.status] || 0) + 1; });
+    return c;
+  }
+
+  // ── Grid ────────────────────────────────────────────────────────────────────
+  function renderGrid() {
+    const grid = document.getElementById('grid');
+    grid.innerHTML = services.map(s => {
+      const rows   = historyCache[s.name];        // undefined until loaded
+      const lat    = s.latency_ms != null
+        ? `<span class="latency" style="color:${latColor(s.latency_ms)}">${Math.round(s.latency_ms)}<span class="latency-unit">ms</span></span>`
+        : `<span class="latency-null">—</span>`;
+      const ago    = s.last_checked ? timeAgo(s.last_checked) : 'never';
+      const spark  = rows ? sparkline(rows) : '<span class="spark-empty">loading…</span>';
+      const uptime = rows ? calcUptime(rows)  : null;
+      const stats  = rows ? calcStats(rows)   : null;
+
+      const uptimeBar = uptime ? `
+        <div class="uptime-bar-wrap">
+          <div class="uptime-bar-track">
+            <div class="uptime-bar-fill" style="width:${uptime};background:${uptimeColor(uptime)}"></div>
+          </div>
+          <span class="uptime-label">${uptime} uptime</span>
+        </div>` : '';
+
+      const statsRow = stats ? `
+        <div class="card-stats">
+          <div class="stat-seg">min <b style="color:var(--up)">${stats.min}ms</b></div>
+          <div class="stat-seg">avg <b>${stats.avg}ms</b></div>
+          <div class="stat-seg">max <b style="color:${latColor(stats.maxRaw)}">${stats.max}ms</b></div>
+        </div>` : '';
+
+      return `
+        <div class="card ${selected === s.name ? 'active' : ''}" data-name="${esc(s.name)}" data-status="${s.status}">
+          <div class="card-top">
+            <div class="card-name-row">
+              <span class="svc-icon">${TYPE_ICON[s.type] || '📡'}</span>
+              <span class="card-name ${s.status === 'down' ? 'pulse' : ''}">${esc(s.name)}</span>
+            </div>
+            <span class="badge badge-${s.status}">${s.status}</span>
+          </div>
+          <div class="card-target"><span class="chip">${s.type}</span>${esc(s.target)}${s.port ? ':' + s.port : ''}</div>
+          <div class="sparkline-wrap">${spark}</div>
+          <div class="card-mid">
+            ${lat}
+            <div class="card-time">${ago}<br><span style="font-size:10px">every ${s.interval}s</span></div>
+          </div>
+          ${statsRow}
+          ${uptimeBar}
+          <div class="card-actions">
+            <button class="btn-primary btn-check">Check now</button>
+            <button class="btn-ghost btn-history">History</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    grid.querySelectorAll('.card').forEach(card => {
+      const name = card.dataset.name;
+      const svc  = services.find(s => s.name === name);
+      card.addEventListener('click', () => selectSvc(name));
+      card.querySelector('.btn-check').addEventListener('click', e => { e.stopPropagation(); runCheck(svc); });
+      card.querySelector('.btn-history').addEventListener('click', e => { e.stopPropagation(); selectSvc(name); });
+    });
+  }
+
+  // ── Sparkline (inline SVG) ───────────────────────────────────────────────────
+  function sparkline(rows) {
+    const pts  = [...rows].slice(0, 10).reverse().map(r => r.latency_ms).filter(v => v != null);
+    if (pts.length < 2) return '<span class="spark-empty">no data yet</span>';
+    const mn = Math.min(...pts), mx = Math.max(...pts), rng = mx - mn || 1;
+    const W = 100, H = 32, P = 3;
+    const coords = pts.map((v, i) => {
+      const x = P + (i / (pts.length - 1)) * (W - 2 * P);
+      const y = H - P - ((v - mn) / rng) * (H - 2 * P);
+      return [x.toFixed(1), y.toFixed(1)];
+    });
+    const line  = coords.map(([x, y]) => `${x},${y}`).join(' ');
+    const fill  = [`${P},${H}`, ...coords.map(([x, y]) => `${x},${y}`), `${W - P},${H}`].join(' ');
+    const color = latColor(pts[pts.length - 1]);
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible">
+      <polygon points="${fill}" fill="${color}" opacity="0.1"/>
+      <polyline points="${line}" fill="none" stroke="${color}" stroke-width="1.8"
+        stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>`;
+  }
+
+  // ── Stats helpers ────────────────────────────────────────────────────────────
+  function calcUptime(rows) {
+    if (!rows.length) return null;
+    const up = rows.filter(r => r.status === 'up').length;
+    return ((up / rows.length) * 100).toFixed(1) + '%';
+  }
+
+  function calcStats(rows) {
+    const vals = rows.map(r => r.latency_ms).filter(v => v != null);
+    if (!vals.length) return null;
+    const mn  = Math.min(...vals), mx = Math.max(...vals);
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return { min: Math.round(mn), max: Math.round(mx), maxRaw: mx, avg: Math.round(avg) };
+  }
+
+  function latColor(ms) {
+    if (ms == null) return 'var(--unk)';
+    if (ms < 200)  return '#22c55e';
+    if (ms < 1000) return '#f59e0b';
+    return '#ef4444';
+  }
+
+  function uptimeColor(pct) {
+    const v = parseFloat(pct);
+    if (v >= 99) return 'var(--up)';
+    if (v >= 90) return 'var(--warn)';
+    return 'var(--down)';
+  }
+
+  // ── Favicon ──────────────────────────────────────────────────────────────────
+  function updateFavicon(hasDown) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = 32; c.height = 32;
+      const ctx = c.getContext('2d');
+      ctx.beginPath();
+      ctx.arc(16, 16, 15, 0, Math.PI * 2);
+      ctx.fillStyle = hasDown ? '#450a0a' : '#052e16';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(16, 16, 14, 0, Math.PI * 2);
+      ctx.strokeStyle = hasDown ? '#ef4444' : '#22c55e';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = hasDown ? '#ef4444' : '#22c55e';
+      ctx.font = 'bold 17px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(hasDown ? '!' : '✓', 16, 17);
+      let link = document.querySelector("link[rel~='icon']");
+      if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+      link.href = c.toDataURL();
+    } catch { /* canvas blocked */ }
+  }
+
+  // ── Toast ────────────────────────────────────────────────────────────────────
+  function showToast(msg, type = 'info') {
+    const wrap  = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = msg;
+    wrap.appendChild(toast);
+    requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('show')));
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 350);
+    }, 3500);
+  }
+
+  // ── Manual check ─────────────────────────────────────────────────────────────
+  async function runCheck(svc) {
+    const card = document.querySelector(`.card[data-name="${svc.name}"]`);
+    const btn  = card && card.querySelector('.btn-check');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Checking…'; }
+    try {
+      const body = { name: svc.name, type: svc.type, target: svc.target };
+      if (svc.port) body.port = svc.port;
+      const result = await api('/checks/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const latStr = result.latency_ms != null ? ` — ${Math.round(result.latency_ms)}ms` : '';
+      showToast(
+        `${svc.name} checked${latStr} · ${result.status.toUpperCase()}`,
+        result.status === 'up' ? 'success' : result.status === 'down' ? 'error' : 'info'
+      );
+    } catch (e) {
+      showError('Check failed: ' + e.message);
+      showToast('Check failed: ' + e.message, 'error');
+    } finally {
+      await loadServices();
+      if (selected === svc.name) await loadHistory(svc.name);
+    }
+  }
+
+  // ── Sidebar ──────────────────────────────────────────────────────────────────
+  async function selectSvc(name) {
+    selected = name;
+    const svc = services.find(s => s.name === name);
+    renderGrid();
+    document.getElementById('sidebar-icon').textContent    = TYPE_ICON[svc?.type] || '📡';
+    document.getElementById('sidebar-svc-name').textContent = name;
+    document.getElementById('sidebar-backdrop').classList.add('open');
+    document.getElementById('sidebar').classList.add('open');
+    document.body.style.overflow = 'hidden';
+    await loadHistory(name);
+  }
+
+  function closeSidebar() {
+    selected = null;
+    document.getElementById('sidebar-backdrop').classList.remove('open');
+    document.getElementById('sidebar').classList.remove('open');
+    document.body.style.overflow = '';
+    destroyChart();
+    renderGrid();
+  }
+
+  // ── History ──────────────────────────────────────────────────────────────────
+  async function loadHistory(name) {
+    const body = document.getElementById('sidebar-content');
+    body.innerHTML = '<p class="empty">Loading…</p>';
+    try {
+      const rows = await api('/history?service=' + encodeURIComponent(name) + '&limit=50');
+      historyCache[name] = rows;
+      renderGrid();
+      if (!rows.length) {
+        destroyChart();
+        body.innerHTML = '<p class="empty">No history yet — click "Check now" to run the first check.</p>';
+        return;
+      }
+      renderChart(rows);
+      renderTable(rows, body);
+    } catch {
+      body.innerHTML = '<p class="empty">Failed to load history.</p>';
+    }
+  }
+
+  // ── Chart ────────────────────────────────────────────────────────────────────
+  function renderChart(rows) {
+    const ordered = [...rows].reverse();
+    const labels  = ordered.map(r => r.checked_at ? fmtShort(r.checked_at) : '');
+    const data    = ordered.map(r => r.latency_ms ?? null);
+    const colors  = ordered.map(r => latColor(r.latency_ms));
+
+    destroyChart();
+    const ctx = document.getElementById('latency-chart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Latency (ms)',
+          data,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,0.06)',
+          pointBackgroundColor: colors,
+          pointBorderColor: colors,
+          pointRadius: 4,
+          pointHoverRadius: 7,
+          borderWidth: 2,
+          fill: true,
+          tension: 0.35,
+          spanGaps: false,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e293b',
+            borderColor: '#334155',
+            borderWidth: 1,
+            titleColor: '#94a3b8',
+            bodyColor: '#f1f5f9',
+            callbacks: {
+              label: ctx => ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + ' ms' : 'no data',
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { color: '#64748b', maxTicksLimit: 8, maxRotation: 0 }, grid: { color: '#1e293b' } },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#64748b', callback: v => v + ' ms' },
+            grid:  { color: '#263548' },
+          },
+        },
+      },
+    });
+  }
+
+  function renderTable(rows, container) {
+    container.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Status</th><th>Latency</th><th>Detail</th></tr></thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              <td style="color:var(--muted);white-space:nowrap">${r.checked_at ? fmtFull(r.checked_at) : '—'}</td>
+              <td><span class="badge badge-${r.status}">${r.status}</span></td>
+              <td style="color:${latColor(r.latency_ms)}">${r.latency_ms != null ? r.latency_ms.toFixed(1) + ' ms' : '—'}</td>
+              <td style="color:var(--muted);font-size:12px">${esc(r.detail || '—')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function destroyChart() { if (chart) { chart.destroy(); chart = null; } }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+  // SQLite strips timezone info — append Z so the browser treats the string as UTC
+  function toDate(iso) {
+    if (!iso) return null;
+    return new Date(/[Zz]|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + 'Z');
+  }
+
+  function timeAgo(iso) {
+    const s = Math.floor((Date.now() - toDate(iso)) / 1000);
+    if (s < 5)    return 'just now';
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    return Math.floor(s / 3600) + 'h ago';
+  }
+
+  function fmtShort(iso) {
+    return toDate(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function fmtFull(iso) {
+    const d = toDate(iso);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error-bar');
+    el.textContent = '⚠ ' + msg; el.hidden = false;
+  }
+  function hideError() { document.getElementById('error-bar').hidden = true; }
+
+  // ── Auto-refresh ─────────────────────────────────────────────────────────────
+  function startTimer() {
+    clearInterval(timer);
+    countdown = 30;
+    timer = setInterval(async () => {
+      countdown--;
+      document.getElementById('countdown').textContent = countdown;
+      if (countdown <= 0) {
+        countdown = 30;
+        await loadServices();
+        if (selected) await loadHistory(selected);
+      }
+    }, 1000);
+  }
+
+  loadServices();
+  startTimer();
+</script>
+</body>
+</html>

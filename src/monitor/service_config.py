@@ -1,0 +1,36 @@
+"""Service definitions loaded from a YAML config file."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, Field
+
+
+class ServiceThresholds(BaseModel):
+    latency_ms: float | None = None
+    cpu: float = 90.0
+    memory: float = 90.0
+    disk: float = 90.0
+
+
+class ServiceConfig(BaseModel):
+    name: str
+    type: Literal["http", "tcp", "system"]
+    target: str
+    port: int | None = None
+    interval: int = Field(default=60, ge=1)
+    timeout: float = Field(default=5.0, gt=0)
+    thresholds: ServiceThresholds = Field(default_factory=ServiceThresholds)
+
+
+class _ServicesFile(BaseModel):
+    services: list[ServiceConfig]
+
+
+def load_services(path: str | Path) -> list[ServiceConfig]:
+    """Parse a services YAML file and return validated service configs."""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    return _ServicesFile.model_validate(raw).services

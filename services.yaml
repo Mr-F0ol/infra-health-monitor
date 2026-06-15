@@ -1,0 +1,30 @@
+services:
+  - name: warframefool
+    type: http
+    target: https://warframefool.vercel.app
+    interval: 60
+
+  - name: google
+    type: http
+    target: https://www.google.com
+    interval: 60
+
+  - name: github
+    type: http
+    target: https://github.com
+    interval: 120
+
+  - name: local-postgres
+    type: tcp
+    target: localhost
+    port: 5432
+    interval: 30
+
+  - name: local-system
+    type: system
+    target: /
+    interval: 60
+    thresholds:
+      cpu: 90.0
+      memory: 90.0
+      disk: 90.0
