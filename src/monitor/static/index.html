@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
   <title>Infra Health Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -40,6 +41,13 @@
       min-height: 100vh;
     }
 
+    /* Keyboard focus ring */
+    :focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
     /* ── Header ─────────────────────────────────────────────────── */
     header {
       position: sticky; top: 0; z-index: 20;
@@ -60,7 +68,6 @@
       font-weight: 700; font-size: 15px; letter-spacing: -0.02em;
       display: flex; align-items: center; gap: 10px;
     }
-    .logo-text { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 2px; }
     .logo span { color: var(--blue); }
 
     .live-dot {
@@ -78,10 +85,32 @@
     .header-right { display: flex; align-items: center; gap: 10px; }
     .header-time  { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
+    /* Refresh interval segmented control */
+    .refresh-controls {
+      display: flex;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .refresh-btn {
+      background: var(--surface);
+      border: none;
+      border-right: 1px solid var(--border);
+      color: var(--muted);
+      padding: 4px 9px;
+      font-size: 11px; font-weight: 500; font-family: inherit;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+      line-height: 1;
+    }
+    .refresh-btn:last-child { border-right: none; }
+    .refresh-btn:hover { background: var(--surface2); color: var(--text); }
+    .refresh-btn.active { background: var(--blue); color: #fff; }
+
     .pill {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 99px; padding: 3px 12px;
-      font-size: 12px; color: var(--muted);
+      font-size: 12px; color: var(--muted); white-space: nowrap;
     }
 
     .btn-icon {
@@ -120,10 +149,8 @@
       gap: 12px; margin-bottom: 1.75rem;
     }
     .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1rem 1.25rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1rem 1.25rem;
       transition: border-color .15s;
     }
     .stat-card:hover { border-color: var(--blue); }
@@ -133,7 +160,7 @@
     /* ── Toolbar ─────────────────────────────────────────────────── */
     .toolbar {
       display: flex; align-items: center; gap: 10px;
-      margin-bottom: 1.5rem; flex-wrap: wrap;
+      margin-bottom: .75rem; flex-wrap: wrap;
     }
     .search-wrap { position: relative; flex: 1; min-width: 180px; max-width: 320px; }
     .search-icon {
@@ -157,9 +184,9 @@
       cursor: pointer; transition: all .15s; font-family: inherit;
     }
     .filter-pill:hover { color: var(--text); background: var(--surface2); }
-    .filter-pill.active                      { background: var(--blue); color: #fff; border-color: var(--blue); }
-    .filter-pill[data-filter="up"].active    { background: var(--up);   color: #fff; border-color: var(--up);   }
-    .filter-pill[data-filter="down"].active  { background: var(--down); color: #fff; border-color: var(--down); }
+    .filter-pill.active                         { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .filter-pill[data-filter="up"].active       { background: var(--up);   color: #fff; border-color: var(--up); }
+    .filter-pill[data-filter="down"].active     { background: var(--down); color: #fff; border-color: var(--down); }
     .filter-pill[data-filter="degraded"].active { background: var(--deg);  color: #fff; border-color: var(--deg); }
 
     .sort-select {
@@ -169,6 +196,10 @@
       cursor: pointer; outline: none; margin-left: auto;
     }
     .sort-select:focus { border-color: var(--blue); }
+
+    /* Results count */
+    .results-count { font-size: 12px; color: var(--muted); margin-bottom: 1rem; min-height: 18px; }
+    .results-count strong { color: var(--text); }
 
     /* ── Grid ────────────────────────────────────────────────────── */
     .grid {
@@ -210,12 +241,18 @@
       transition: background .15s, border-color .15s, transform .15s, box-shadow .15s;
       display: flex; flex-direction: column; gap: 10px;
       position: relative;
-      animation: card-in .22s ease both;
     }
+    /* Animation only on first page load, not on every refresh */
+    .card.is-new { animation: card-in .22s ease both; }
+
     .card:hover {
       background: var(--surface2);
       transform: translateY(-2px);
       box-shadow: 0 6px 28px rgba(0,0,0,.4);
+    }
+    .card:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
     }
     .card.active { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
 
@@ -266,10 +303,16 @@
     .stat-seg { display: flex; gap: 4px; align-items: center; }
     .stat-seg b { color: var(--text); }
 
-    .uptime-bar-wrap  { display: flex; align-items: center; gap: 8px; }
-    .uptime-bar-track { flex: 1; height: 3px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
-    .uptime-bar-fill  { height: 100%; border-radius: 2px; transition: width .5s ease; }
-    .uptime-label     { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    /* ── Uptime blocks (StatusPage-style) ───────────────────────── */
+    .uptime-blocks {
+      display: flex; gap: 2px; height: 20px; align-items: stretch;
+    }
+    .uptime-block {
+      flex: 1; border-radius: 2px; min-width: 0;
+      transition: opacity .1s; cursor: default;
+    }
+    .uptime-block:hover { opacity: .65; }
+    .uptime-label { font-size: 10px; color: var(--muted); white-space: nowrap; margin-top: 2px; }
 
     .card-actions { display: flex; gap: 6px; }
 
@@ -294,8 +337,6 @@
     .btn-primary { background: var(--blue); color: #fff; border-color: transparent; }
     .btn-primary:hover { background: #2563eb; }
     .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
-    .btn-ghost { background: transparent; color: var(--muted); }
-    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
     .btn-close {
       background: transparent; color: var(--muted);
       border: none; font-size: 18px; padding: 4px 8px;
@@ -345,7 +386,6 @@
     }
     .sidebar-head-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
-    /* service meta bar */
     .svc-meta {
       display: flex; flex-shrink: 0;
       border-bottom: 1px solid var(--border);
@@ -389,6 +429,15 @@
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: rgba(255,255,255,.02); }
 
+    /* Status-change marker in history table */
+    .changed-tag {
+      display: inline-block; font-size: 9px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .05em;
+      padding: 1px 5px; border-radius: 3px; margin-left: 5px;
+      background: rgba(59,130,246,.15); color: var(--blue);
+      vertical-align: middle;
+    }
+
     .empty { text-align: center; color: var(--muted); padding: 2.5rem; font-size: 13px; }
 
     .error-bar {
@@ -430,7 +479,7 @@
     @media (max-width: 640px) {
       header { padding: 0 1rem; }
       main   { padding: 1.25rem 1rem; }
-      .header-time { display: none; }
+      .header-time, .refresh-controls { display: none; }
       .sidebar { width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); }
       .summary { grid-template-columns: repeat(3, 1fr); }
       .toolbar { gap: 8px; }
@@ -445,56 +494,65 @@
 
 <header>
   <div class="logo">
-    <div class="live-dot"></div>
+    <div class="live-dot" aria-hidden="true"></div>
     Infra <span>Health</span> Monitor
   </div>
   <div class="header-right">
     <span id="last-updated" class="header-time"></span>
-    <button class="btn-icon" id="btn-refresh" title="Refresh now">↻</button>
-    <span class="pill">↻ <span id="countdown">30</span>s</span>
+    <div class="refresh-controls" role="group" aria-label="Auto-refresh interval">
+      <button class="refresh-btn" data-interval="15">15s</button>
+      <button class="refresh-btn active" data-interval="30">30s</button>
+      <button class="refresh-btn" data-interval="60">60s</button>
+      <button class="refresh-btn" data-interval="0">⏸</button>
+    </div>
+    <button class="btn-icon" id="btn-refresh" aria-label="Refresh now (press R)">↻</button>
+    <span class="pill" id="countdown-pill">↻ <span id="countdown">30</span>s</span>
   </div>
 </header>
 
-<div id="status-bar" class="status-bar has-unk">
-  <div class="status-dot"></div>
+<div id="status-bar" class="status-bar has-unk" role="status" aria-live="polite">
+  <div class="status-dot" aria-hidden="true"></div>
   <span id="status-text">Loading…</span>
   <span id="status-uptime"></span>
 </div>
 
 <main>
-  <div id="error-bar" class="error-bar" hidden></div>
-
-  <div id="summary" class="summary"></div>
+  <div id="error-bar" class="error-bar" hidden role="alert"></div>
+  <div id="summary" class="summary" aria-label="Summary counts"></div>
 
   <div class="toolbar">
     <div class="search-wrap">
       <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true">
         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       </svg>
-      <input type="text" id="search" placeholder="Filter services…" autocomplete="off">
+      <input type="text" id="search" placeholder="Filter services…" autocomplete="off"
+             aria-label="Filter services by name or target">
     </div>
-    <div class="filter-pills">
+    <div class="filter-pills" role="group" aria-label="Filter by status">
       <button class="filter-pill active" data-filter="all">All</button>
       <button class="filter-pill" data-filter="up">Up</button>
       <button class="filter-pill" data-filter="down">Down</button>
       <button class="filter-pill" data-filter="degraded">Degraded</button>
     </div>
-    <select id="sort-select" class="sort-select">
+    <select id="sort-select" class="sort-select" aria-label="Sort order">
       <option value="status">Sort: Status</option>
       <option value="name">Sort: Name</option>
       <option value="latency">Sort: Latency</option>
     </select>
   </div>
 
-  <div id="grid" class="grid"></div>
+  <div id="results-count" class="results-count" aria-live="polite"></div>
+  <div id="grid" class="grid" role="list"></div>
 </main>
 
 <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
-<aside id="sidebar" class="sidebar">
+<aside id="sidebar" class="sidebar"
+       role="dialog" aria-modal="true" aria-labelledby="sidebar-svc-name">
   <div class="sidebar-head">
     <div class="sidebar-title-block">
-      <div class="sidebar-icon-wrap"><span id="sidebar-icon"></span></div>
+      <div class="sidebar-icon-wrap" aria-hidden="true"><span id="sidebar-icon"></span></div>
       <div style="min-width:0">
         <div class="sidebar-name" id="sidebar-svc-name"></div>
         <div class="sidebar-target" id="sidebar-svc-target"></div>
@@ -502,7 +560,7 @@
     </div>
     <div class="sidebar-head-right">
       <span id="sidebar-badge"></span>
-      <button class="btn-close" id="btn-close-sidebar">✕</button>
+      <button class="btn-close" id="btn-close-sidebar" aria-label="Close service detail">✕</button>
     </div>
   </div>
 
@@ -516,32 +574,74 @@
   </div>
 </aside>
 
-<div id="toast-container"></div>
+<div id="toast-container" aria-live="assertive" aria-atomic="true"></div>
 
 <script>
-  let services     = [];
-  let historyCache = {};
-  let selected     = null;
-  let countdown    = 30;
-  let timer        = null;
-  let chart        = null;
-  let loaded       = false;
-  let activeFilter = 'all';
-  let activeSort   = 'status';
+  // ── State ────────────────────────────────────────────────────────────────────
+  let services        = [];
+  let historyCache    = {};   // { [name]: { data: [], ts: number } }
+  let selected        = null;
+  let countdown       = 30;
+  let refreshInterval = 30;   // seconds; 0 = paused
+  let timer           = null;
+  let tsTimer         = null; // ticks every 5s to update timeAgo labels in-place
+  let chart           = null;
+  let loaded          = false;
+  let firstLoad       = true;
+  let activeFilter    = 'all';
+  let activeSort      = 'status';
+  let prevFocusEl     = null;
 
-  const TYPE_ICON = { http: '🌐', tcp: '🔌', system: '💻' };
+  const TYPE_ICON   = { http: '🌐', tcp: '🔌', system: '💻' };
+  const HISTORY_TTL = 25_000; // cache history for ~25s to avoid N fetches per refresh
 
-  // ── Wiring ──────────────────────────────────────────────────────────────────
+  // ── Chart.js plugin: coloured status bands ───────────────────────────────────
+  const statusBandPlugin = {
+    id: 'statusBands',
+    beforeDatasetsDraw(chart) {
+      const rows = chart._statusRows;
+      if (!rows || !rows.length) return;
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea || !scales.x) return;
+      const { left, right, top, bottom } = chartArea;
+      ctx.save();
+      rows.forEach((r, i) => {
+        if (r.status === 'up') return;
+        const color = r.status === 'down'
+          ? 'rgba(239,68,68,0.13)'
+          : 'rgba(249,115,22,0.10)';
+        const x0 = i === 0              ? left  : scales.x.getPixelForValue(i - 0.5);
+        const x1 = i === rows.length - 1 ? right : scales.x.getPixelForValue(i + 0.5);
+        ctx.fillStyle = color;
+        ctx.fillRect(
+          Math.max(left, x0), top,
+          Math.min(right, x1) - Math.max(left, x0), bottom - top
+        );
+      });
+      ctx.restore();
+    },
+  };
+  Chart.register(statusBandPlugin);
+
+  // ── Event wiring ─────────────────────────────────────────────────────────────
   document.getElementById('btn-close-sidebar').addEventListener('click', closeSidebar);
   document.getElementById('sidebar-backdrop').addEventListener('click', closeSidebar);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && selected) closeSidebar(); });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && selected) { closeSidebar(); return; }
+    if (e.key === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey
+        && document.activeElement.tagName !== 'INPUT'
+        && document.activeElement.tagName !== 'SELECT') {
+      document.getElementById('btn-refresh').click();
+    }
+  });
 
   document.getElementById('btn-refresh').addEventListener('click', async () => {
     const btn = document.getElementById('btn-refresh');
     btn.classList.add('spinning');
     await loadServices();
     btn.classList.remove('spinning');
-    resetTimer();
+    if (refreshInterval > 0) resetTimer();
   });
 
   document.getElementById('search').addEventListener('input', renderGrid);
@@ -560,6 +660,15 @@
     renderGrid();
   });
 
+  document.querySelectorAll('.refresh-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.refresh-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      refreshInterval = parseInt(btn.dataset.interval, 10);
+      resetTimer();
+    });
+  });
+
   // ── API ──────────────────────────────────────────────────────────────────────
   async function api(path, opts) {
     const res = await fetch(path, opts);
@@ -567,7 +676,7 @@
     return res.json();
   }
 
-  // ── Filter + Sort ────────────────────────────────────────────────────────────
+  // ── Filter + sort ────────────────────────────────────────────────────────────
   function getFilteredSorted() {
     const q = document.getElementById('search').value.trim().toLowerCase();
     let list = services.filter(s => {
@@ -586,10 +695,14 @@
     return list;
   }
 
-  // ── Services ─────────────────────────────────────────────────────────────────
+  // ── Load services ─────────────────────────────────────────────────────────────
   async function loadServices() {
     try {
-      services = await api('/services');
+      const fresh = await api('/services');
+      // Invalidate cache for removed services
+      const freshNames = new Set(fresh.map(s => s.name));
+      Object.keys(historyCache).forEach(k => { if (!freshNames.has(k)) delete historyCache[k]; });
+      services = fresh;
       loaded   = true;
       renderSummary();
       renderStatusBar();
@@ -607,20 +720,25 @@
   }
 
   async function loadAllHistory() {
-    await Promise.allSettled(services.map(async svc => {
+    // Only re-fetch services whose cache has expired
+    const stale = services.filter(svc => {
+      const entry = historyCache[svc.name];
+      return !entry || (Date.now() - entry.ts) > HISTORY_TTL;
+    });
+    if (!stale.length) return;
+    await Promise.allSettled(stale.map(async svc => {
       try {
-        historyCache[svc.name] = await api(
-          '/history?service=' + encodeURIComponent(svc.name) + '&limit=50'
-        );
+        const data = await api('/history?service=' + encodeURIComponent(svc.name) + '&limit=50');
+        historyCache[svc.name] = { data, ts: Date.now() };
       } catch {
-        historyCache[svc.name] = [];
+        historyCache[svc.name] = { data: [], ts: Date.now() };
       }
     }));
     renderGrid();
     renderStatusUptime();
   }
 
-  // ── Summary ──────────────────────────────────────────────────────────────────
+  // ── Summary cards ─────────────────────────────────────────────────────────────
   function renderSummary() {
     const c = counts();
     document.getElementById('summary').innerHTML = `
@@ -667,7 +785,7 @@
   }
 
   function renderStatusUptime() {
-    const allRows = Object.values(historyCache).flat();
+    const allRows = Object.values(historyCache).flatMap(e => e.data);
     if (!allRows.length) return;
     const upCount = allRows.filter(r => r.status === 'up').length;
     const pct     = ((upCount / allRows.length) * 100).toFixed(1);
@@ -680,9 +798,9 @@
     return c;
   }
 
-  // ── Skeleton ─────────────────────────────────────────────────────────────────
+  // ── Skeleton ──────────────────────────────────────────────────────────────────
   function skeletonCard() {
-    return `<div class="skeleton-card">
+    return `<div class="skeleton-card" role="listitem" aria-hidden="true">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div class="skeleton sk-line" style="width:55%"></div>
         <div class="skeleton sk-line" style="width:18%;height:18px;border-radius:99px"></div>
@@ -693,36 +811,42 @@
         <div class="skeleton sk-line" style="width:28%"></div>
         <div class="skeleton sk-line" style="width:22%"></div>
       </div>
-      <div class="skeleton sk-line" style="width:100%;height:3px"></div>
-      <div style="display:flex;gap:6px">
-        <div class="skeleton" style="width:36%;height:28px;border-radius:6px"></div>
-        <div class="skeleton" style="width:28%;height:28px;border-radius:6px"></div>
-      </div>
+      <div class="skeleton" style="height:20px;border-radius:2px"></div>
+      <div><div class="skeleton" style="width:55%;height:28px;border-radius:6px"></div></div>
     </div>`;
   }
 
-  // ── Grid ─────────────────────────────────────────────────────────────────────
+  // ── Grid ──────────────────────────────────────────────────────────────────────
   function renderGrid() {
-    const grid = document.getElementById('grid');
+    const grid     = document.getElementById('grid');
+    const countEl  = document.getElementById('results-count');
 
     if (!loaded) {
       grid.innerHTML = Array.from({ length: 6 }).map(skeletonCard).join('');
+      countEl.textContent = '';
       return;
     }
 
     const list = getFilteredSorted();
 
     if (!services.length) {
-      grid.innerHTML = `<div class="empty-state">
+      grid.innerHTML = `<div class="empty-state" role="listitem">
         <div class="empty-icon">📡</div>
         <div class="empty-title">No services configured</div>
         <div class="empty-desc">Add services to <code>services.yaml</code> to start monitoring.</div>
       </div>`;
+      countEl.textContent = '';
       return;
     }
 
+    // Results counter
+    const isFiltered = activeFilter !== 'all' || document.getElementById('search').value.trim();
+    countEl.innerHTML = isFiltered
+      ? `Showing <strong>${list.length}</strong> of <strong>${services.length}</strong> service${services.length !== 1 ? 's' : ''}`
+      : '';
+
     if (!list.length) {
-      grid.innerHTML = `<div class="empty-state">
+      grid.innerHTML = `<div class="empty-state" role="listitem">
         <div class="empty-icon">🔍</div>
         <div class="empty-title">No services match</div>
         <div class="empty-desc">Try a different filter or search term.</div>
@@ -730,23 +854,20 @@
       return;
     }
 
+    const isFirst = firstLoad;
+    firstLoad = false;
+
     grid.innerHTML = list.map((s, i) => {
-      const rows   = historyCache[s.name];
+      const entry  = historyCache[s.name];
+      const rows   = entry?.data;
       const lat    = s.latency_ms != null
         ? `<span class="latency" style="color:${latColor(s.latency_ms)}">${Math.round(s.latency_ms)}<span class="latency-unit">ms</span></span>`
         : `<span class="latency-null">—</span>`;
       const ago    = s.last_checked ? timeAgo(s.last_checked) : 'never';
       const spark  = rows ? sparkline(rows) : '<span class="spark-empty">loading…</span>';
+      const blocks = rows ? uptimeBlocks(rows) : '';
+      const stats  = rows ? calcStats(rows) : null;
       const uptime = rows ? calcUptime(rows) : null;
-      const stats  = rows ? calcStats(rows)  : null;
-
-      const uptimeBar = uptime ? `
-        <div class="uptime-bar-wrap">
-          <div class="uptime-bar-track">
-            <div class="uptime-bar-fill" style="width:${uptime};background:${uptimeColor(uptime)}"></div>
-          </div>
-          <span class="uptime-label">${uptime} uptime</span>
-        </div>` : '';
 
       const statsRow = stats ? `
         <div class="card-stats">
@@ -755,28 +876,37 @@
           <div class="stat-seg">max <b style="color:${latColor(stats.maxRaw)}">${stats.max}ms</b></div>
         </div>` : '';
 
+      const uptimeLbl = uptime && rows
+        ? `<div class="uptime-label">${uptime} uptime · last ${Math.min(rows.length, 50)} checks</div>` : '';
+
+      const animStyle = isFirst ? `style="animation-delay:${(i * 0.04).toFixed(2)}s"` : '';
+
       return `
-        <div class="card ${selected === s.name ? 'active' : ''}"
-             data-name="${esc(s.name)}" data-status="${s.status}"
-             style="animation-delay:${(i * 0.04).toFixed(2)}s">
+        <div class="card ${selected === s.name ? 'active' : ''} ${isFirst ? 'is-new' : ''}"
+             role="listitem" tabindex="0"
+             aria-label="Service ${esc(s.name)}, status ${s.status}"
+             data-name="${esc(s.name)}" data-status="${s.status}" ${animStyle}>
           <div class="card-top">
             <div class="card-name-row">
-              <span class="svc-icon">${TYPE_ICON[s.type] || '📡'}</span>
+              <span class="svc-icon" aria-hidden="true">${TYPE_ICON[s.type] || '📡'}</span>
               <span class="card-name ${s.status === 'down' ? 'pulse' : ''}">${esc(s.name)}</span>
             </div>
             <span class="badge badge-${s.status}">${s.status}</span>
           </div>
           <div class="card-target"><span class="chip">${s.type}</span>${esc(s.target)}${s.port ? ':' + s.port : ''}</div>
-          <div class="sparkline-wrap">${spark}</div>
+          <div class="sparkline-wrap" aria-hidden="true">${spark}</div>
           <div class="card-mid">
             ${lat}
-            <div class="card-time">${ago}<br><span style="font-size:10px">every ${s.interval}s</span></div>
+            <div class="card-time">
+              <span data-checked-at="${esc(s.last_checked || '')}">${ago}</span><br>
+              <span style="font-size:10px">every ${s.interval}s</span>
+            </div>
           </div>
           ${statsRow}
-          ${uptimeBar}
+          ${blocks}
+          ${uptimeLbl}
           <div class="card-actions">
-            <button class="btn-primary btn-check">Check now</button>
-            <button class="btn-ghost btn-history">History</button>
+            <button class="btn-primary btn-check" aria-label="Run check for ${esc(s.name)} now">Check now</button>
           </div>
         </div>`;
     }).join('');
@@ -784,13 +914,25 @@
     grid.querySelectorAll('.card').forEach(card => {
       const name = card.dataset.name;
       const svc  = services.find(s => s.name === name);
-      card.addEventListener('click', () => selectSvc(name));
-      card.querySelector('.btn-check').addEventListener('click', e => { e.stopPropagation(); runCheck(svc); });
-      card.querySelector('.btn-history').addEventListener('click', e => { e.stopPropagation(); selectSvc(name); });
+      // Click anywhere on card (except buttons) opens detail
+      card.addEventListener('click', e => {
+        if (!e.target.closest('button')) selectSvc(name);
+      });
+      // Keyboard: Enter / Space to open detail
+      card.addEventListener('keydown', e => {
+        if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button')) {
+          e.preventDefault();
+          selectSvc(name);
+        }
+      });
+      card.querySelector('.btn-check').addEventListener('click', e => {
+        e.stopPropagation();
+        runCheck(svc);
+      });
     });
   }
 
-  // ── Sparkline ────────────────────────────────────────────────────────────────
+  // ── Sparkline ─────────────────────────────────────────────────────────────────
   function sparkline(rows) {
     const pts = [...rows].slice(0, 10).reverse().map(r => r.latency_ms).filter(v => v != null);
     if (pts.length < 2) return '<span class="spark-empty">no data yet</span>';
@@ -801,17 +943,33 @@
       const y = H - P - ((v - mn) / rng) * (H - 2 * P);
       return [x.toFixed(1), y.toFixed(1)];
     });
-    const line  = coords.map(([x, y]) => `${x},${y}`).join(' ');
-    const fill  = [`${P},${H}`, ...coords.map(([x, y]) => `${x},${y}`), `${W - P},${H}`].join(' ');
+    const line = coords.map(([x, y]) => `${x},${y}`).join(' ');
+    const fill = [`${P},${H}`, ...coords.map(([x, y]) => `${x},${y}`), `${W - P},${H}`].join(' ');
     const color = latColor(pts[pts.length - 1]);
-    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible">
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true" style="overflow:visible">
       <polygon points="${fill}" fill="${color}" opacity="0.1"/>
       <polyline points="${line}" fill="none" stroke="${color}" stroke-width="1.8"
         stroke-linejoin="round" stroke-linecap="round"/>
     </svg>`;
   }
 
-  // ── Stats helpers ─────────────────────────────────────────────────────────────
+  // ── Uptime blocks (StatusPage-style) ─────────────────────────────────────────
+  function uptimeBlocks(rows) {
+    if (!rows || !rows.length) return '';
+    const checks = [...rows].slice(0, 50).reverse();
+    const blocks = checks.map(r => {
+      const color = r.status === 'up'       ? 'var(--up)'
+                  : r.status === 'down'     ? 'var(--down)'
+                  : r.status === 'degraded' ? 'var(--deg)'
+                  : 'var(--unk)';
+      const ts = r.checked_at ? fmtFull(r.checked_at) : 'unknown time';
+      return `<span class="uptime-block" style="background:${color}"
+                    title="${esc(r.status)} — ${esc(ts)}" aria-hidden="true"></span>`;
+    }).join('');
+    return `<div class="uptime-blocks" aria-label="Last ${checks.length} check results timeline">${blocks}</div>`;
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────────────────
   function calcUptime(rows) {
     if (!rows.length) return null;
     const up = rows.filter(r => r.status === 'up').length;
@@ -833,27 +991,16 @@
     return '#ef4444';
   }
 
-  function uptimeColor(pct) {
-    const v = parseFloat(pct);
-    if (v >= 99) return 'var(--up)';
-    if (v >= 90) return 'var(--warn)';
-    return 'var(--down)';
-  }
-
   // ── Favicon ───────────────────────────────────────────────────────────────────
   function updateFavicon(hasDown) {
     try {
       const c = document.createElement('canvas');
       c.width = 32; c.height = 32;
       const ctx = c.getContext('2d');
-      ctx.beginPath();
-      ctx.arc(16, 16, 15, 0, Math.PI * 2);
-      ctx.fillStyle = hasDown ? '#450a0a' : '#052e16';
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(16, 16, 14, 0, Math.PI * 2);
-      ctx.strokeStyle = hasDown ? '#ef4444' : '#22c55e';
-      ctx.lineWidth = 2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(16, 16, 15, 0, Math.PI * 2);
+      ctx.fillStyle = hasDown ? '#450a0a' : '#052e16'; ctx.fill();
+      ctx.beginPath(); ctx.arc(16, 16, 14, 0, Math.PI * 2);
+      ctx.strokeStyle = hasDown ? '#ef4444' : '#22c55e'; ctx.lineWidth = 2; ctx.stroke();
       ctx.fillStyle = hasDown ? '#ef4444' : '#22c55e';
       ctx.font = 'bold 17px sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -880,7 +1027,7 @@
 
   // ── Manual check ──────────────────────────────────────────────────────────────
   async function runCheck(svc) {
-    const card = document.querySelector(`.card[data-name="${svc.name}"]`);
+    const card = document.querySelector(`.card[data-name="${CSS.escape(svc.name)}"]`);
     const btn  = card && card.querySelector('.btn-check');
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Checking…'; }
     try {
@@ -896,6 +1043,8 @@
         `${svc.name} checked${latStr} · ${result.status.toUpperCase()}`,
         result.status === 'up' ? 'success' : result.status === 'down' ? 'error' : 'info'
       );
+      // Bust cache so the card refreshes with fresh history
+      delete historyCache[svc.name];
     } catch (e) {
       showError('Check failed: ' + e.message);
       showToast('Check failed: ' + e.message, 'error');
@@ -907,12 +1056,13 @@
 
   // ── Sidebar ───────────────────────────────────────────────────────────────────
   async function selectSvc(name) {
-    selected = name;
-    const svc = services.find(s => s.name === name);
+    prevFocusEl = document.activeElement;
+    selected    = name;
+    const svc   = services.find(s => s.name === name);
     renderGrid();
 
-    document.getElementById('sidebar-icon').textContent     = TYPE_ICON[svc?.type] || '📡';
-    document.getElementById('sidebar-svc-name').textContent = name;
+    document.getElementById('sidebar-icon').textContent      = TYPE_ICON[svc?.type] || '📡';
+    document.getElementById('sidebar-svc-name').textContent  = name;
     document.getElementById('sidebar-svc-target').textContent =
       (svc?.target || '') + (svc?.port ? ':' + svc.port : '');
     document.getElementById('sidebar-badge').innerHTML =
@@ -933,19 +1083,49 @@
       </div>
       ${svc?.port ? `<div class="svc-meta-item"><div class="svc-meta-label">Port</div><div class="svc-meta-val">${svc.port}</div></div>` : ''}`;
 
+    const sidebar = document.getElementById('sidebar');
     document.getElementById('sidebar-backdrop').classList.add('open');
-    document.getElementById('sidebar').classList.add('open');
+    sidebar.classList.add('open');
     document.body.style.overflow = 'hidden';
+
+    // Move focus into sidebar and enable focus trap
+    setTimeout(() => document.getElementById('btn-close-sidebar').focus(), 50);
+    enableFocusTrap(sidebar);
+
     await loadHistory(name);
   }
 
+  function enableFocusTrap(el) {
+    if (el._trapHandler) el.removeEventListener('keydown', el._trapHandler);
+    el._trapHandler = e => {
+      if (e.key !== 'Tab') return;
+      const focusable = [...el.querySelectorAll(
+        'button:not([disabled]), [href], input, select, [tabindex]:not([tabindex="-1"])'
+      )];
+      if (!focusable.length) { e.preventDefault(); return; }
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) { last.focus(); e.preventDefault(); }
+      } else {
+        if (document.activeElement === last) { first.focus(); e.preventDefault(); }
+      }
+    };
+    el.addEventListener('keydown', el._trapHandler);
+  }
+
   function closeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar._trapHandler) {
+      sidebar.removeEventListener('keydown', sidebar._trapHandler);
+      delete sidebar._trapHandler;
+    }
     selected = null;
     document.getElementById('sidebar-backdrop').classList.remove('open');
-    document.getElementById('sidebar').classList.remove('open');
+    sidebar.classList.remove('open');
     document.body.style.overflow = '';
     destroyChart();
     renderGrid();
+    if (prevFocusEl?.focus) { setTimeout(() => prevFocusEl.focus(), 50); prevFocusEl = null; }
   }
 
   // ── History ───────────────────────────────────────────────────────────────────
@@ -954,7 +1134,7 @@
     body.innerHTML = '<p class="empty">Loading…</p>';
     try {
       const rows = await api('/history?service=' + encodeURIComponent(name) + '&limit=50');
-      historyCache[name] = rows;
+      historyCache[name] = { data: rows, ts: Date.now() };
       renderGrid();
       if (!rows.length) {
         destroyChart();
@@ -1003,14 +1183,14 @@
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#1e293b',
-            borderColor: '#334155',
-            borderWidth: 1,
-            titleColor: '#94a3b8',
-            bodyColor: '#f1f5f9',
-            padding: 10,
+            backgroundColor: '#1e293b', borderColor: '#334155', borderWidth: 1,
+            titleColor: '#94a3b8', bodyColor: '#f1f5f9', padding: 10,
             callbacks: {
-              label: ctx => ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + ' ms' : 'no data',
+              label: ctx => {
+                const row = ordered[ctx.dataIndex];
+                const ms  = ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + ' ms' : 'no data';
+                return `${ms} · ${row?.status || '—'}`;
+              },
             },
           },
         },
@@ -1027,23 +1207,31 @@
         },
       },
     });
+    // Attach row data for the status band plugin, then redraw
+    chart._statusRows = ordered;
+    chart.update('none');
   }
 
   function renderTable(rows, container) {
+    const tableRows = rows.map((r, i) => {
+      const prev    = rows[i + 1];
+      const changed = prev && prev.status !== r.status;
+      return `<tr>
+        <td style="color:var(--muted);white-space:nowrap;font-size:12px">${r.checked_at ? fmtFull(r.checked_at) : '—'}</td>
+        <td>
+          <span class="badge badge-${r.status}">${r.status}</span>
+          ${changed ? '<span class="changed-tag">changed</span>' : ''}
+        </td>
+        <td style="color:${latColor(r.latency_ms)};font-weight:600">${r.latency_ms != null ? r.latency_ms.toFixed(1) + ' ms' : '—'}</td>
+        <td style="color:var(--muted);font-size:12px">${esc(r.detail || '—')}</td>
+      </tr>`;
+    }).join('');
+
     container.innerHTML = `
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr><th>Time</th><th>Status</th><th>Latency</th><th>Detail</th></tr>
-          </thead>
-          <tbody>
-            ${rows.map(r => `<tr>
-              <td style="color:var(--muted);white-space:nowrap;font-size:12px">${r.checked_at ? fmtFull(r.checked_at) : '—'}</td>
-              <td><span class="badge badge-${r.status}">${r.status}</span></td>
-              <td style="color:${latColor(r.latency_ms)};font-weight:600">${r.latency_ms != null ? r.latency_ms.toFixed(1) + ' ms' : '—'}</td>
-              <td style="color:var(--muted);font-size:12px">${esc(r.detail || '—')}</td>
-            </tr>`).join('')}
-          </tbody>
+          <thead><tr><th>Time</th><th>Status</th><th>Latency</th><th>Detail</th></tr></thead>
+          <tbody>${tableRows}</tbody>
         </table>
       </div>`;
   }
@@ -1051,14 +1239,15 @@
   function destroyChart() { if (chart) { chart.destroy(); chart = null; } }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
-  // SQLite strips timezone — append Z so the browser treats the string as UTC
   function toDate(iso) {
     if (!iso) return null;
     return new Date(/[Zz]|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + 'Z');
   }
 
   function timeAgo(iso) {
-    const s = Math.floor((Date.now() - toDate(iso)) / 1000);
+    const d = toDate(iso);
+    if (!d) return 'never';
+    const s = Math.floor((Date.now() - d) / 1000);
     if (s < 5)    return 'just now';
     if (s < 60)   return s + 's ago';
     if (s < 3600) return Math.floor(s / 60) + 'm ago';
@@ -1084,27 +1273,50 @@
   }
   function hideError() { document.getElementById('error-bar').hidden = true; }
 
-  // ── Auto-refresh ──────────────────────────────────────────────────────────────
+  // ── Real-time timestamp ticker ─────────────────────────────────────────────────
+  // Updates the "Xs ago" labels in-place without a full re-render
+  function startTsTicker() {
+    clearInterval(tsTimer);
+    tsTimer = setInterval(() => {
+      document.querySelectorAll('[data-checked-at]').forEach(el => {
+        const iso = el.dataset.checkedAt;
+        if (iso) el.textContent = timeAgo(iso);
+      });
+    }, 5000);
+  }
+
+  // ── Auto-refresh timer ────────────────────────────────────────────────────────
   function resetTimer() {
     clearInterval(timer);
-    countdown = 30;
-    document.getElementById('countdown').textContent = countdown;
+    const pill = document.getElementById('countdown-pill');
+
+    if (refreshInterval === 0) {
+      pill.innerHTML = '⏸ paused';
+      return;
+    }
+
+    countdown = refreshInterval;
+    pill.innerHTML = `↻ <span id="countdown">${countdown}</span>s`;
+
     timer = setInterval(async () => {
       countdown--;
-      document.getElementById('countdown').textContent = countdown;
+      const el = document.getElementById('countdown');
+      if (el) el.textContent = countdown;
       if (countdown <= 0) {
-        countdown = 30;
+        countdown = refreshInterval;
         await loadServices();
         if (selected) await loadHistory(selected);
+        const el2 = document.getElementById('countdown');
+        if (el2) el2.textContent = countdown;
       }
     }, 1000);
   }
 
-  function startTimer() { resetTimer(); }
-
-  renderGrid(); // show skeletons immediately
+  // ── Init ──────────────────────────────────────────────────────────────────────
+  renderGrid();    // show skeletons immediately
   loadServices();
-  startTimer();
+  resetTimer();
+  startTsTicker();
 </script>
 </body>
 </html>

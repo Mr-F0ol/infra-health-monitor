@@ -9,13 +9,20 @@ from .config import settings
 from .models import Base
 
 # SQLite needs check_same_thread disabled when used across FastAPI threads.
-connect_args = (
-    {"check_same_thread": False}
-    if settings.database_url.startswith("sqlite")
-    else {}
-)
+_is_sqlite = settings.database_url.startswith("sqlite")
+connect_args = {"check_same_thread": False} if _is_sqlite else {}
 
-engine = create_engine(settings.database_url, connect_args=connect_args, future=True)
+# For a long-running monitor against a real DB, pre-ping detects connections
+# the server dropped while idle and recycle caps their lifetime. SQLite has no
+# network pool, so these only apply to Postgres et al.
+engine_kwargs: dict[str, object] = {}
+if not _is_sqlite:
+    engine_kwargs["pool_pre_ping"] = True
+    engine_kwargs["pool_recycle"] = 1800
+
+engine = create_engine(
+    settings.database_url, connect_args=connect_args, future=True, **engine_kwargs
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

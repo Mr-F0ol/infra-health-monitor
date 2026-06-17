@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     memory_threshold: float = 90.0
     disk_threshold: float = 90.0
 
+    # Consecutive unhealthy checks required before an alert fires (anti-flapping).
+    failure_threshold: int = 3
+
+    # Days of check history to retain in the database (0 = keep forever).
+    retention_days: int = 30
+
     # Alert providers — leave empty to disable
     discord_webhook_url: str = ""
     telegram_bot_token: str = ""

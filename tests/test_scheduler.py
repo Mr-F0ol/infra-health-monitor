@@ -99,6 +99,17 @@ def test_setup_scheduler_empty_services():
     assert scheduler.get_jobs() == []
 
 
+def test_setup_scheduler_adds_purge_job_when_retention_set():
+    scheduler = setup_scheduler([], MagicMock(), retention_days=30)
+    job_ids = {j.id for j in scheduler.get_jobs()}
+    assert "purge_old_results" in job_ids
+
+
+def test_setup_scheduler_no_purge_job_when_retention_zero():
+    scheduler = setup_scheduler([], MagicMock(), retention_days=0)
+    assert scheduler.get_jobs() == []
+
+
 # ---------------------------------------------------------------------------
 # _build_check
 # ---------------------------------------------------------------------------

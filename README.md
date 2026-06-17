@@ -142,6 +142,28 @@ Target: https://api.example.com/health
 Time: 2026-06-15 14:32:01 UTC
 ```
 
+### Anti-flapping
+
+A service must fail `MONITOR_FAILURE_THRESHOLD` checks **in a row** (default: 3)
+before a `DOWN`/`DEGRADED` alert fires, so a single transient blip never pages
+you. Recovery (`UP`) is confirmed immediately. Raw results are always persisted
+and exported to Prometheus — the threshold only gates *alerting*.
+
+### Latency thresholds
+
+Give an HTTP or TCP service a `latency_ms` threshold and a reachable-but-slow
+response is reported as `DEGRADED`:
+
+```yaml
+services:
+  - name: my-api
+    type: http
+    target: https://api.example.com/health
+    interval: 60
+    thresholds:
+      latency_ms: 800     # 200 OK but slower than 800ms → DEGRADED
+```
+
 ## Grafana dashboard
 
 The dashboard is provisioned automatically from `monitoring/grafana/dashboards/infra-monitor.json` and includes:
@@ -169,6 +191,37 @@ ruff check src tests
 # type-check
 mypy src
 ```
+
+## Database migrations
+
+Schema is managed with **Alembic**. The default SQLite quick-start auto-creates
+tables on boot; for Postgres / production, run migrations explicitly:
+
+```bash
+alembic upgrade head      # apply all migrations
+alembic revision --autogenerate -m "describe change"   # after editing models
+```
+
+The Docker image runs `alembic upgrade head` automatically before starting the
+API (see `docker-compose.yml`).
+
+## Production notes
+
+- **Hardening:** the bundled `docker-compose.yml` uses demo credentials
+  (`monitor`/`monitor` for Postgres, `admin` for Grafana). Override
+  `GRAFANA_ADMIN_PASSWORD` and the Postgres secrets, and put the API behind a
+  reverse proxy with auth/TLS — `/services`, `/history` and `/metrics` are
+  unauthenticated by design (intended for a private network or scrape target).
+- **Container:** runs as a non-root user from a multi-stage image, with a
+  `HEALTHCHECK` and CPU/memory limits.
+- **Data retention:** check history is purged after `MONITOR_RETENTION_DAYS`
+  (default 30; `0` keeps everything). Prometheus keeps 7 days of metrics.
+- **High availability:** the scheduler runs **in-process**, so run a *single*
+  instance. Two replicas would double every check and alert — there is no
+  leader election. For HA, externalise the scheduler (e.g. APScheduler with a
+  shared jobstore, or a dedicated worker) before scaling out.
+- **Supply chain:** CI runs `pip-audit` on dependencies and Trivy on the built
+  image.
 
 ## Technical decisions
 

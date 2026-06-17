@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
 from .alerts.notifier import Notifier
@@ -19,13 +21,19 @@ logger = logging.getLogger(__name__)
 
 def _build_check(svc: ServiceConfig) -> BaseCheck:
     if svc.type == "http":
-        return HttpCheck(name=svc.name, target=svc.target, timeout=svc.timeout)
+        return HttpCheck(
+            name=svc.name,
+            target=svc.target,
+            timeout=svc.timeout,
+            latency_threshold_ms=svc.thresholds.latency_ms,
+        )
     if svc.type == "tcp":
         return TcpCheck(
             name=svc.name,
             target=svc.target,
             timeout=svc.timeout,
             port=svc.port or 80,
+            latency_threshold_ms=svc.thresholds.latency_ms,
         )
     return SystemCheck(
         name=svc.name,
@@ -71,10 +79,24 @@ async def _run_service_job(
     )
 
 
+def _purge_old_results(
+    session_factory: sessionmaker,  # type: ignore[type-arg]
+    retention_days: int,
+) -> None:
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    with session_factory() as session:
+        result = session.execute(
+            delete(CheckResult).where(CheckResult.created_at < cutoff)
+        )
+        session.commit()
+    logger.info("purged %d check results older than %d days", result.rowcount, retention_days)
+
+
 def setup_scheduler(
     services: list[ServiceConfig],
     session_factory: sessionmaker,  # type: ignore[type-arg]
     notifier: Notifier | None = None,
+    retention_days: int = 0,
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     for svc in services:
@@ -87,5 +109,15 @@ def setup_scheduler(
             replace_existing=True,
             max_instances=1,
             misfire_grace_time=30,
+        )
+    if retention_days > 0:
+        scheduler.add_job(
+            _purge_old_results,
+            trigger="interval",
+            hours=24,
+            args=[session_factory, retention_days],
+            id="purge_old_results",
+            replace_existing=True,
+            max_instances=1,
         )
     return scheduler

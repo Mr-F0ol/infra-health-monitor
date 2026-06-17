@@ -24,7 +24,9 @@ class SystemCheck(BaseCheck):
     check_type: str = field(default="system", init=False)
 
     async def run(self) -> CheckOutcome:
-        cpu = psutil.cpu_percent(interval=None)
+        # A short interval forces psutil to sample over a real window; with
+        # ``interval=None`` the first call after process start always returns 0.0.
+        cpu = psutil.cpu_percent(interval=0.1)
         memory = psutil.virtual_memory().percent
         disk = psutil.disk_usage(self.target or "/").percent
 

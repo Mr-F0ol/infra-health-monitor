@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .alerts import DiscordProvider, Notifier, TelegramProvider
@@ -23,6 +23,7 @@ from .alerts.base import AlertProvider
 from .checks import BaseCheck, HttpCheck, SystemCheck, TcpCheck
 from .config import settings
 from .database import SessionLocal, get_session, init_db
+from .metrics import record_outcome
 from .models import CheckResult
 from .scheduler import setup_scheduler
 from .service_config import ServiceConfig, load_services
@@ -41,6 +42,7 @@ class CheckRequest(BaseModel):
     target: str
     port: int | None = Field(default=None, ge=1, le=65535)
     timeout: float = Field(default_factory=lambda: settings.default_timeout, gt=0)
+    latency_threshold_ms: float | None = Field(default=None, gt=0)
 
 
 class CheckResponse(BaseModel):
@@ -93,9 +95,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     notifier: Notifier | None = None
     if providers:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=False)
-        notifier = Notifier(redis_client, providers)
+        notifier = Notifier(redis_client, providers, settings.failure_threshold)
 
-    scheduler = setup_scheduler(services, SessionLocal, notifier)
+    scheduler = setup_scheduler(
+        services, SessionLocal, notifier, retention_days=settings.retention_days
+    )
     if services:
         scheduler.start()
 
@@ -122,12 +126,21 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 def _build_check(req: CheckRequest) -> BaseCheck:
     if req.type == "http":
-        return HttpCheck(name=req.name, target=req.target, timeout=req.timeout)
+        return HttpCheck(
+            name=req.name,
+            target=req.target,
+            timeout=req.timeout,
+            latency_threshold_ms=req.latency_threshold_ms,
+        )
     if req.type == "tcp":
         if req.port is None:
             raise ValueError("port is required for tcp checks")
         return TcpCheck(
-            name=req.name, target=req.target, timeout=req.timeout, port=req.port
+            name=req.name,
+            target=req.target,
+            timeout=req.timeout,
+            port=req.port,
+            latency_threshold_ms=req.latency_threshold_ms,
         )
     return SystemCheck(
         name=req.name,
@@ -161,15 +174,33 @@ async def metrics() -> Response:
 
 @app.get("/services", response_model=list[ServiceStatusResponse])
 async def list_services(request: Request, session: SessionDep) -> list[ServiceStatusResponse]:
-    result = []
-    for svc in request.app.state.services:
-        stmt = (
-            select(CheckResult)
-            .where(CheckResult.name == svc.name)
-            .order_by(CheckResult.created_at.desc())
-            .limit(1)
+    services = request.app.state.services
+    names = [svc.name for svc in services]
+
+    # Latest result per service in a single round-trip: find the max timestamp
+    # per name, then join back to fetch the corresponding rows.
+    latest: dict[str, CheckResult] = {}
+    if names:
+        newest = (
+            select(
+                CheckResult.name,
+                func.max(CheckResult.created_at).label("created_at"),
+            )
+            .where(CheckResult.name.in_(names))
+            .group_by(CheckResult.name)
+            .subquery()
         )
-        row = session.execute(stmt).scalar_one_or_none()
+        stmt = select(CheckResult).join(
+            newest,
+            (CheckResult.name == newest.c.name)
+            & (CheckResult.created_at == newest.c.created_at),
+        )
+        for row in session.execute(stmt).scalars():
+            latest[row.name] = row
+
+    result = []
+    for svc in services:
+        last = latest.get(svc.name)
         result.append(
             ServiceStatusResponse(
                 name=svc.name,
@@ -177,9 +208,9 @@ async def list_services(request: Request, session: SessionDep) -> list[ServiceSt
                 target=svc.target,
                 port=svc.port,
                 interval=svc.interval,
-                status=row.status if row else "unknown",
-                latency_ms=row.latency_ms if row else None,
-                last_checked=row.created_at if row else None,
+                status=last.status if last else "unknown",
+                latency_ms=last.latency_ms if last else None,
+                last_checked=last.created_at if last else None,
             )
         )
     return result
@@ -227,6 +258,8 @@ async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
     )
     session.add(row)
     session.commit()
+
+    record_outcome(outcome.name, outcome.check_type, outcome.state, outcome.latency_ms)
 
     return CheckResponse(
         name=outcome.name,

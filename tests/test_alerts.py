@@ -20,11 +20,19 @@ def _outcome(state: CheckState, latency_ms: float | None = None) -> CheckOutcome
     )
 
 
-def _make_notifier(previous_raw: bytes | None, *providers):
+def _make_notifier(
+    previous_raw: bytes | None,
+    *providers,
+    failure_threshold: int = 1,
+    fail_count: int = 1,
+):
     redis = AsyncMock()
     redis.get.return_value = previous_raw
     redis.set = AsyncMock()
-    return Notifier(redis, list(providers)), redis
+    redis.delete = AsyncMock()
+    redis.incr = AsyncMock(return_value=fail_count)
+    notifier = Notifier(redis, list(providers), failure_threshold=failure_threshold)
+    return notifier, redis
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +118,43 @@ async def test_notifier_notifies_all_providers():
 
     p1.send.assert_awaited_once()
     p2.send.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Anti-flapping
+# ---------------------------------------------------------------------------
+
+
+async def test_notifier_suppresses_flap_below_threshold():
+    """A single failure with threshold=3 must not alert."""
+    provider = AsyncMock()
+    notifier, redis = _make_notifier(None, provider, failure_threshold=3, fail_count=1)
+
+    await notifier.notify(_outcome(CheckState.DOWN))
+
+    provider.send.assert_not_awaited()
+    redis.set.assert_not_awaited()  # state not confirmed yet
+
+
+async def test_notifier_alerts_once_threshold_reached():
+    """The third consecutive failure with threshold=3 confirms and alerts."""
+    provider = AsyncMock()
+    notifier, redis = _make_notifier(None, provider, failure_threshold=3, fail_count=3)
+
+    await notifier.notify(_outcome(CheckState.DOWN))
+
+    provider.send.assert_awaited_once()
+    redis.set.assert_awaited_once_with("monitor:state:my-service", "down")
+
+
+async def test_notifier_recovery_clears_failure_streak():
+    provider = AsyncMock()
+    notifier, redis = _make_notifier(b"down", provider, failure_threshold=3)
+
+    await notifier.notify(_outcome(CheckState.UP, latency_ms=12.0))
+
+    redis.delete.assert_awaited_once_with("monitor:fails:my-service")
+    provider.send.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

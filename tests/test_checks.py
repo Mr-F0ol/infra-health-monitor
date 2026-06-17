@@ -72,6 +72,41 @@ async def _http_ok_handler(reader: asyncio.StreamReader, writer: asyncio.StreamW
     writer.close()
 
 
+async def test_http_check_degraded_when_latency_exceeds_threshold():
+    server = await asyncio.start_server(_http_ok_handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+
+    async with server:
+        await server.start_serving()
+        check = HttpCheck(
+            name="slow",
+            target=f"http://127.0.0.1:{port}",
+            timeout=2.0,
+            latency_threshold_ms=0.0001,
+        )
+        outcome = await check.run()
+
+    assert outcome.state is CheckState.DEGRADED
+    assert "slow" in (outcome.detail or "")
+
+
+async def test_tcp_check_degraded_when_latency_exceeds_threshold():
+    sock, port = _free_port_with_listener()
+    try:
+        check = TcpCheck(
+            name="slow",
+            target="127.0.0.1",
+            port=port,
+            timeout=2.0,
+            latency_threshold_ms=0.0001,
+        )
+        outcome = await check.run()
+    finally:
+        sock.close()
+
+    assert outcome.state is CheckState.DEGRADED
+
+
 async def test_system_check_up_with_high_thresholds():
     check = SystemCheck(
         name="sys",
