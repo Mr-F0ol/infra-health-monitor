@@ -53,18 +53,24 @@ async def _run_service_job(
     check = _build_check(svc)
     outcome = await check.run()
 
-    with session_factory() as session:
-        session.add(
-            CheckResult(
-                name=outcome.name,
-                check_type=outcome.check_type,
-                target=outcome.target,
-                status=outcome.state.value,
-                latency_ms=outcome.latency_ms,
-                detail=outcome.detail,
+    # Persistence is the least critical step: if the DB is momentarily
+    # unreachable we still want the metric exported and the alert sent, so the
+    # write is isolated and its failure never suppresses the rest.
+    try:
+        with session_factory() as session:
+            session.add(
+                CheckResult(
+                    name=outcome.name,
+                    check_type=outcome.check_type,
+                    target=outcome.target,
+                    status=outcome.state.value,
+                    latency_ms=outcome.latency_ms,
+                    detail=outcome.detail,
+                )
             )
-        )
-        session.commit()
+            session.commit()
+    except Exception:
+        logger.exception("failed to persist check result for %s", svc.name)
 
     record_outcome(outcome.name, outcome.check_type, outcome.state, outcome.latency_ms)
 
@@ -111,10 +117,12 @@ def setup_scheduler(
             misfire_grace_time=30,
         )
     if retention_days > 0:
+        # Fixed daily time rather than 24h-from-boot, so frequent restarts
+        # (deploys, OOM) can't keep postponing the purge indefinitely.
         scheduler.add_job(
             _purge_old_results,
-            trigger="interval",
-            hours=24,
+            trigger="cron",
+            hour=3,
             args=[session_factory, retention_days],
             id="purge_old_results",
             replace_existing=True,

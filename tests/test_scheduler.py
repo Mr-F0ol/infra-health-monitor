@@ -62,6 +62,37 @@ def test_load_services_raises_when_file_missing(tmp_path):
         load_services(tmp_path / "missing.yaml")
 
 
+def test_load_services_rejects_duplicate_names(tmp_path):
+    yaml_content = """
+services:
+  - name: web
+    type: http
+    target: https://a.com
+  - name: web
+    type: http
+    target: https://b.com
+"""
+    f = tmp_path / "services.yaml"
+    f.write_text(yaml_content)
+
+    with pytest.raises(ValueError, match="duplicate service names: web"):
+        load_services(f)
+
+
+def test_load_services_rejects_tcp_without_port(tmp_path):
+    yaml_content = """
+services:
+  - name: db
+    type: tcp
+    target: localhost
+"""
+    f = tmp_path / "services.yaml"
+    f.write_text(yaml_content)
+
+    with pytest.raises(ValueError, match="tcp checks require a port"):
+        load_services(f)
+
+
 # ---------------------------------------------------------------------------
 # setup_scheduler
 # ---------------------------------------------------------------------------
@@ -202,4 +233,36 @@ async def test_run_service_job_calls_notifier_when_set():
 
         await _run_service_job(svc, MagicMock(return_value=mock_session), notifier=mock_notifier)
 
+    mock_notifier.notify.assert_awaited_once_with(outcome)
+
+
+async def test_run_service_job_survives_persistence_failure():
+    """A DB write failure must not suppress metrics or alerting."""
+    svc = ServiceConfig(name="web", type="http", target="https://example.com", interval=60)
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.commit.side_effect = RuntimeError("db down")
+
+    outcome = CheckOutcome(
+        name="web",
+        check_type="http",
+        target="https://example.com",
+        state=CheckState.DOWN,
+        latency_ms=None,
+    )
+    mock_notifier = AsyncMock()
+
+    with (
+        patch("monitor.scheduler._build_check") as mock_build,
+        patch("monitor.scheduler.record_outcome") as mock_record,
+    ):
+        mock_check = AsyncMock()
+        mock_check.run.return_value = outcome
+        mock_build.return_value = mock_check
+
+        await _run_service_job(svc, MagicMock(return_value=mock_session), notifier=mock_notifier)
+
+    mock_record.assert_called_once()
     mock_notifier.notify.assert_awaited_once_with(outcome)

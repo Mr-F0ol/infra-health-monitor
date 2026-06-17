@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .alerts import DiscordProvider, Notifier, TelegramProvider
@@ -97,6 +97,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=False)
         notifier = Notifier(redis_client, providers, settings.failure_threshold)
 
+    # Exposed to the readiness probe so it can verify Redis when alerting is on.
+    app.state.redis = redis_client
+
     scheduler = setup_scheduler(
         services, SessionLocal, notifier, retention_days=settings.retention_days
     )
@@ -164,7 +167,39 @@ async def frontend() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    """Liveness — the process is up and serving. Cheap and dependency-free."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready(request: Request, session: SessionDep) -> JSONResponse:
+    """Readiness — verifies the backing stores the monitor actually needs.
+
+    Returns 503 if the database is unreachable (or Redis, when alerting is
+    enabled), so a load balancer / orchestrator can stop routing to an instance
+    that is up but unable to persist results.
+    """
+    checks: dict[str, str] = {}
+
+    try:
+        session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {exc}"
+
+    redis_client: Redis[bytes] | None = getattr(request.app.state, "redis", None)
+    if redis_client is not None:
+        try:
+            await redis_client.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            checks["redis"] = f"error: {exc}"
+
+    healthy = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        {"ready": healthy, "checks": checks},
+        status_code=200 if healthy else 503,
+    )
 
 
 @app.get("/metrics")

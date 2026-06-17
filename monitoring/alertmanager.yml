@@ -1,0 +1,12 @@
+route:
+  receiver: default
+  group_by: ["alertname", "service"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  # The default receiver has no integrations, so firing alerts are visible in
+  # the Alertmanager UI (http://localhost:9093) without any external setup.
+  # Add a Slack / webhook / email / PagerDuty config here to route them out.
+  - name: default

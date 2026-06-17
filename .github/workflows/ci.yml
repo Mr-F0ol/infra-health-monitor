@@ -80,5 +80,6 @@ jobs:
         with:
           image-ref: infra-health-monitor:${{ github.sha }}
           format: table
-          severity: HIGH,CRITICAL
-          exit-code: "0"
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

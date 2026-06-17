@@ -84,6 +84,7 @@ docker compose up -d
 | API docs | http://localhost:8000/docs |
 | Grafana | http://localhost:3000  (admin / admin) |
 | Prometheus | http://localhost:9090 |
+| Alertmanager | http://localhost:9093 |
 
 ## Configure services
 
@@ -116,7 +117,8 @@ services:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/health` | Liveness probe |
+| GET | `/health` | Liveness — process is up (cheap, no dependencies) |
+| GET | `/ready` | Readiness — verifies DB (and Redis if alerting on); `503` if not |
 | GET | `/services` | Current status of every configured service |
 | GET | `/history?service=name` | Check history for one service |
 | GET | `/metrics` | Prometheus exposition format |
@@ -163,6 +165,21 @@ services:
     thresholds:
       latency_ms: 800     # 200 OK but slower than 800ms → DEGRADED
 ```
+
+### Prometheus alerting (watches the watcher)
+
+The app's Discord/Telegram alerts can't fire if the monitor process itself
+dies. Prometheus + Alertmanager close that gap independently:
+
+- **`MonitorDown`** — `up == 0` for 1m. A deadman's switch that fires when
+  Prometheus can no longer scrape the monitor at all.
+- **`ServiceDown`** — a service reports `DOWN` for 2m.
+- **`ServiceDegraded`** — a service reports `DEGRADED` for 5m.
+
+Rules live in `monitoring/alert_rules.yml`; routing is in
+`monitoring/alertmanager.yml`. The default receiver has no integrations, so
+alerts are visible in the Alertmanager UI (http://localhost:9093) out of the
+box — add a Slack/webhook/PagerDuty config there to route them out.
 
 ## Grafana dashboard
 

@@ -1,0 +1,32 @@
+groups:
+  - name: infra-health-monitor
+    rules:
+      # The monitor itself is unreachable — Prometheus can't scrape it. This is
+      # the deadman's switch: it fires even when the app (and its own
+      # Discord/Telegram alerting) is completely down.
+      - alert: MonitorDown
+        expr: up{job="infra-health-monitor"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health monitor is not being scraped"
+          description: "Prometheus has been unable to scrape the monitor (up == 0) for 1m — the process may be down."
+
+      - alert: ServiceDown
+        expr: monitor_service_status == -1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.service }} is DOWN"
+          description: "{{ $labels.service }} ({{ $labels.type }}) has reported DOWN for 2m."
+
+      - alert: ServiceDegraded
+        expr: monitor_service_status == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Service {{ $labels.service }} is DEGRADED"
+          description: "{{ $labels.service }} ({{ $labels.type }}) has reported DEGRADED for 5m."
