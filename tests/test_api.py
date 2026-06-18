@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from monitor.config import settings
-from monitor.database import SessionLocal
+from monitor.database import SessionLocal, init_db
 from monitor.main import app
 from monitor.models import CheckResult
 
@@ -29,6 +29,7 @@ def client(tmp_path):
     services_file.write_text(_SERVICES)
     saved = settings.services_file
     settings.services_file = str(services_file)
+    init_db()  # CI starts with a fresh DB — ensure tables exist before cleanup.
     _clear()
     try:
         with TestClient(app) as c:

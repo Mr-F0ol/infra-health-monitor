@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from monitor.config import settings
-from monitor.database import SessionLocal
+from monitor.database import SessionLocal, init_db
 from monitor.main import app
 from monitor.models import CheckResult
 
@@ -31,6 +31,7 @@ services:
 @pytest.fixture(autouse=True)
 def _clean_test_rows():
     """The dev SQLite DB persists between runs — isolate the test service rows."""
+    init_db()  # CI starts with a fresh DB — ensure tables exist before cleanup.
     with SessionLocal() as session:
         session.execute(delete(CheckResult).where(CheckResult.name.in_([_SVC_A, _SVC_B])))
         session.commit()
