@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from monitor.checks.base import CheckOutcome, CheckState
-from monitor.scheduler import _build_check, _run_service_job, setup_scheduler
+from monitor.scheduler import (
+    _build_check,
+    _run_service_job,
+    reconcile_jobs,
+    setup_scheduler,
+)
 from monitor.service_config import ServiceConfig, load_services
 
 # ---------------------------------------------------------------------------
@@ -139,6 +144,63 @@ def test_setup_scheduler_adds_purge_job_when_retention_set():
 def test_setup_scheduler_no_purge_job_when_retention_zero():
     scheduler = setup_scheduler([], MagicMock(), retention_days=0)
     assert scheduler.get_jobs() == []
+
+
+# ---------------------------------------------------------------------------
+# reconcile_jobs
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_adds_new_service():
+    scheduler = setup_scheduler([], MagicMock())
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+
+    diff = reconcile_jobs(scheduler, services, MagicMock())
+
+    assert diff == {"added": ["web"], "removed": [], "updated": []}
+    assert {j.id for j in scheduler.get_jobs()} == {"check_web"}
+
+
+def test_reconcile_removes_dropped_service():
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+    scheduler = setup_scheduler(services, MagicMock())
+
+    diff = reconcile_jobs(scheduler, [], MagicMock())
+
+    assert diff == {"added": [], "removed": ["web"], "updated": []}
+    assert scheduler.get_jobs() == []
+
+
+def test_reconcile_updates_changed_interval():
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+    scheduler = setup_scheduler(services, MagicMock())
+
+    changed = [ServiceConfig(name="web", type="http", target="http://a.com", interval=99)]
+    diff = reconcile_jobs(scheduler, changed, MagicMock())
+
+    assert diff == {"added": [], "removed": [], "updated": ["web"]}
+    job = scheduler.get_job("check_web")
+    assert job.trigger.interval.total_seconds() == 99
+
+
+def test_reconcile_leaves_unchanged_service_untouched():
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+    scheduler = setup_scheduler(services, MagicMock())
+
+    diff = reconcile_jobs(scheduler, list(services), MagicMock())
+
+    assert diff == {"added": [], "removed": [], "updated": []}
+
+
+def test_reconcile_preserves_purge_job():
+    scheduler = setup_scheduler([], MagicMock(), retention_days=30)
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+
+    reconcile_jobs(scheduler, services, MagicMock())
+
+    job_ids = {j.id for j in scheduler.get_jobs()}
+    assert "purge_old_results" in job_ids
+    assert "check_web" in job_ids
 
 
 # ---------------------------------------------------------------------------

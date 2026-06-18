@@ -98,6 +98,70 @@ def _purge_old_results(
     logger.info("purged %d check results older than %d days", result.rowcount, retention_days)
 
 
+def _job_id(name: str) -> str:
+    return f"check_{name}"
+
+
+def _add_service_job(
+    scheduler: AsyncIOScheduler,
+    svc: ServiceConfig,
+    session_factory: sessionmaker,  # type: ignore[type-arg]
+    notifier: Notifier | None,
+) -> None:
+    scheduler.add_job(
+        _run_service_job,
+        trigger="interval",
+        seconds=svc.interval,
+        args=[svc, session_factory, notifier],
+        id=_job_id(svc.name),
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=30,
+    )
+
+
+def reconcile_jobs(
+    scheduler: AsyncIOScheduler,
+    services: list[ServiceConfig],
+    session_factory: sessionmaker,  # type: ignore[type-arg]
+    notifier: Notifier | None = None,
+) -> dict[str, list[str]]:
+    """Bring the running scheduler in line with ``services`` without a restart.
+
+    Diffs the desired services against the live check jobs: removes jobs whose
+    service is gone, adds jobs for new services, and replaces jobs whose
+    interval changed (leaving unchanged ones untouched). Returns the diff so the
+    caller can report what happened.
+    """
+    desired = {svc.name: svc for svc in services}
+    live = {
+        job.id[len("check_") :]: job
+        for job in scheduler.get_jobs()
+        if job.id.startswith("check_")
+    }
+
+    added, removed, updated = [], [], []
+
+    for name in live.keys() - desired.keys():
+        scheduler.remove_job(_job_id(name))
+        removed.append(name)
+
+    for name, svc in desired.items():
+        job = live.get(name)
+        if job is None:
+            _add_service_job(scheduler, svc, session_factory, notifier)
+            added.append(name)
+        elif job.args[0] != svc:
+            # Any field changed (interval, target, thresholds, …) → replace.
+            # Remove first so the new trigger applies whether or not the
+            # scheduler is already running.
+            scheduler.remove_job(_job_id(name))
+            _add_service_job(scheduler, svc, session_factory, notifier)
+            updated.append(name)
+
+    return {"added": sorted(added), "removed": sorted(removed), "updated": sorted(updated)}
+
+
 def setup_scheduler(
     services: list[ServiceConfig],
     session_factory: sessionmaker,  # type: ignore[type-arg]
@@ -106,16 +170,7 @@ def setup_scheduler(
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     for svc in services:
-        scheduler.add_job(
-            _run_service_job,
-            trigger="interval",
-            seconds=svc.interval,
-            args=[svc, session_factory, notifier],
-            id=f"check_{svc.name}",
-            replace_existing=True,
-            max_instances=1,
-            misfire_grace_time=30,
-        )
+        _add_service_job(scheduler, svc, session_factory, notifier)
     if retention_days > 0:
         # Fixed daily time rather than 24h-from-boot, so frequent restarts
         # (deploys, OOM) can't keep postponing the purge indefinitely.

@@ -122,8 +122,23 @@ services:
 | GET | `/services` | Current status of every configured service |
 | GET | `/history?service=name` | Check history for one service |
 | GET | `/metrics` | Prometheus exposition format |
+| POST | `/reload` | Re-read `services.yaml` and reconcile scheduler jobs live |
 | POST | `/checks/run` | Run a one-off check immediately |
 | GET | `/checks/results` | Recent check results |
+
+### Reloading config without a restart
+
+Edit `services.yaml`, then:
+
+```bash
+curl -X POST -H "X-API-Key: $MONITOR_API_KEY" http://localhost:8000/reload
+# {"services": 4, "added": ["new-svc"], "removed": ["old-svc"], "updated": ["api"]}
+```
+
+`/reload` diffs the file against the running scheduler — new services get a job,
+removed ones are unscheduled, and changed ones (interval, target, thresholds)
+are replaced. Unchanged services keep running undisturbed. An invalid file
+returns `400` and leaves the live jobs untouched.
 
 ## Authentication
 

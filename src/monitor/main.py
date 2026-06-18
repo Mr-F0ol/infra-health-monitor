@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -26,7 +26,7 @@ from .config import settings
 from .database import SessionLocal, get_session, init_db
 from .metrics import record_outcome
 from .models import CheckResult
-from .scheduler import setup_scheduler
+from .scheduler import reconcile_jobs, setup_scheduler
 from .service_config import ServiceConfig, load_services
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,13 @@ class CheckResponse(BaseModel):
     latency_ms: float | None = None
     detail: str | None = None
     checked_at: datetime | None = None
+
+
+class ReloadResponse(BaseModel):
+    services: int
+    added: list[str]
+    removed: list[str]
+    updated: list[str]
 
 
 class ServiceStatusResponse(BaseModel):
@@ -104,13 +111,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler = setup_scheduler(
         services, SessionLocal, notifier, retention_days=settings.retention_days
     )
-    if services:
-        scheduler.start()
+    # Always start the scheduler so /reload can add the first jobs at runtime
+    # even when the file was empty/missing at boot.
+    scheduler.start()
+
+    # Exposed to /reload so it can reconcile jobs without a restart.
+    app.state.scheduler = scheduler
+    app.state.notifier = notifier
 
     yield
 
-    if services:
-        scheduler.shutdown(wait=False)
+    scheduler.shutdown(wait=False)
     if redis_client is not None:
         await redis_client.aclose()  # type: ignore[attr-defined]
 
@@ -254,6 +265,30 @@ async def list_services(request: Request, session: SessionDep) -> list[ServiceSt
             )
         )
     return result
+
+
+@app.post("/reload", response_model=ReloadResponse, dependencies=[AuthDep])
+async def reload_services(request: Request) -> ReloadResponse:
+    """Re-read services.yaml and reconcile scheduler jobs without a restart.
+
+    On an invalid file we return 400 and leave the running jobs untouched.
+    """
+    try:
+        services = load_services(settings.services_file)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=f"services file not found: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid services file: {exc}") from exc
+
+    diff = reconcile_jobs(
+        request.app.state.scheduler,
+        services,
+        SessionLocal,
+        request.app.state.notifier,
+    )
+    request.app.state.services = services
+    logger.info("reloaded services: %s", diff)
+    return ReloadResponse(services=len(services), **diff)
 
 
 @app.get("/history", response_model=list[CheckResponse], dependencies=[AuthDep])
