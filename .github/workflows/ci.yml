@@ -33,7 +33,7 @@ jobs:
         run: mypy src
 
       - name: Test (pytest + coverage)
-        run: pytest --cov=monitor --cov-report=xml --cov-report=term-missing
+        run: pytest --cov=monitor --cov-report=xml --cov-report=term-missing --cov-fail-under=85
         env:
           MONITOR_DATABASE_URL: "sqlite:///./test.db"
           MONITOR_SERVICES_FILE: "services.yaml"
@@ -57,12 +57,21 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install pip-audit
-        run: pip install pip-audit
+      # Freeze the project's own dependency tree *before* installing pip-audit,
+      # so the audit covers only what the app ships — not pip-audit's deps or
+      # the runner's base pip/setuptools (excluded by pip freeze). This makes
+      # the gate fail on real project vulnerabilities without going red over
+      # ecosystem packages the project doesn't control.
+      - name: Install project
+        run: pip install -e .
+
+      - name: Freeze project dependencies
+        run: pip freeze --exclude-editable > audit-reqs.txt
 
       - name: Audit dependencies
-        run: pip-audit --skip-editable
-        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip-audit --requirement audit-reqs.txt
 
   docker:
     name: Docker build · image scan
