@@ -2,13 +2,23 @@
 
 ## dashboard.png
 
-The README embeds `docs/dashboard.png`. Capture it once and drop it here:
+The README hero image. It is reproducible — generated from seeded demo data
+(not live traffic) so the fleet always looks representative:
 
-1. `docker compose up -d` (or run the API locally) and let a few checks run so
-   the cards show real status/latency.
-2. Open <http://localhost:8000/> and wait for the grid to populate.
-3. Take a full-page screenshot and save it as `docs/dashboard.png`
-   (~1400px wide looks best on GitHub).
+```bash
+# 1. Seed a throwaway DB + demo services file with a realistic fleet
+PYTHONPATH=src MONITOR_DATABASE_URL="sqlite:///./demo.db" \
+  python scripts/seed_demo.py ./demo-services.yaml
 
-Until the file exists the README image will show as broken — it is the only
-asset that has to be added by hand.
+# 2. Serve it (huge check interval, so the scheduler never overwrites the seed)
+PYTHONPATH=src MONITOR_DATABASE_URL="sqlite:///./demo.db" \
+  MONITOR_SERVICES_FILE="./demo-services.yaml" \
+  python -m uvicorn monitor.main:app --port 8765
+
+# 3. Screenshot http://localhost:8765/ at ~1460x1015 and save as docs/dashboard.png
+#    (any headless browser; e.g. Edge/Chrome --headless --screenshot=...)
+
+# 4. Clean up: rm demo.db demo-services.yaml
+```
+
+`scripts/seed_demo.py` is a one-off tooling script, not part of the app.
