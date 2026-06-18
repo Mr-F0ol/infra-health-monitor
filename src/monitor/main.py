@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session
 
 from .alerts import DiscordProvider, Notifier, TelegramProvider
@@ -62,6 +62,23 @@ class ReloadResponse(BaseModel):
     added: list[str]
     removed: list[str]
     updated: list[str]
+
+
+class UptimeResponse(BaseModel):
+    service: str
+    window: str
+    # Percentage of non-DOWN checks in the window; None when there's no data.
+    uptime_pct: float | None = None
+    total_checks: int = 0
+    up_checks: int = 0
+
+
+# Window label → lookback duration for the uptime aggregation.
+_UPTIME_WINDOWS: dict[str, timedelta] = {
+    "24h": timedelta(hours=24),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+}
 
 
 class ServiceStatusResponse(BaseModel):
@@ -264,6 +281,44 @@ async def list_services(request: Request, session: SessionDep) -> list[ServiceSt
                 status=last.status if last else "unknown",
                 latency_ms=last.latency_ms if last else None,
                 last_checked=last.created_at if last else None,
+            )
+        )
+    return result
+
+
+@app.get("/uptime", response_model=list[UptimeResponse], dependencies=[AuthDep])
+async def get_uptime(
+    request: Request,
+    session: SessionDep,
+    window: Literal["24h", "7d", "30d"] = Query(default="24h"),
+    service: str | None = Query(default=None, description="Filter to one service"),
+) -> list[UptimeResponse]:
+    """Availability per service over a rolling window (non-DOWN ratio)."""
+    services = request.app.state.services
+    names = [svc.name for svc in services if service is None or svc.name == service]
+    if not names:
+        return []
+
+    cutoff = datetime.now(UTC) - _UPTIME_WINDOWS[window]
+    up_expr = func.sum(case((CheckResult.status != "down", 1), else_=0))
+    stmt = (
+        select(CheckResult.name, func.count().label("total"), up_expr.label("up"))
+        .where(CheckResult.name.in_(names), CheckResult.created_at >= cutoff)
+        .group_by(CheckResult.name)
+    )
+    stats = {name: (int(total), int(up or 0)) for name, total, up in session.execute(stmt)}
+
+    result = []
+    for name in names:
+        total, up = stats.get(name, (0, 0))
+        pct = round(100 * up / total, 3) if total else None
+        result.append(
+            UptimeResponse(
+                service=name,
+                window=window,
+                uptime_pct=pct,
+                total_checks=total,
+                up_checks=up,
             )
         )
     return result

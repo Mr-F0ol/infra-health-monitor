@@ -13,27 +13,28 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0f172a;
-      --surface:  #1e293b;
-      --surface2: #263548;
-      --border:   #334155;
-      --text:     #f1f5f9;
-      --muted:    #94a3b8;
-      --blue:     #3b82f6;
+      --bg:       #0a0a0d;
+      --surface:  #16161c;
+      --surface2: #1f1f28;
+      --border:   #2a2a35;
+      --text:     #ececf1;
+      --muted:    #8b8b9c;
+      --accent:    #a855f7;
+      --accent-hi: #9333ea;
       --up:       #22c55e;
       --up-bg:    #052e16;
       --down:     #ef4444;
       --down-bg:  #450a0a;
-      --deg:      #f97316;
-      --deg-bg:   #431407;
-      --warn:     #f59e0b;
-      --unk:      #64748b;
+      --deg:      #facc15;
+      --deg-bg:   #422006;
+      --warn:     #facc15;
+      --unk:      #6b6b7c;
       --radius:   12px;
     }
 
     body {
       background: var(--bg);
-      background-image: radial-gradient(ellipse at 60% 0%, rgba(59,130,246,.05) 0%, transparent 55%);
+      background-image: radial-gradient(ellipse at 60% 0%, rgba(168,85,247,.07) 0%, transparent 55%);
       color: var(--text);
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 14px;
@@ -43,7 +44,7 @@
 
     /* Keyboard focus ring */
     :focus-visible {
-      outline: 2px solid var(--blue);
+      outline: 2px solid var(--accent);
       outline-offset: 2px;
       border-radius: 4px;
     }
@@ -61,14 +62,14 @@
     header::after {
       content: '';
       position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
-      background: linear-gradient(90deg, transparent 0%, rgba(59,130,246,.35) 50%, transparent 100%);
+      background: linear-gradient(90deg, transparent 0%, rgba(168,85,247,.4) 50%, transparent 100%);
       pointer-events: none;
     }
     .logo {
       font-weight: 700; font-size: 15px; letter-spacing: -0.02em;
       display: flex; align-items: center; gap: 10px;
     }
-    .logo span { color: var(--blue); }
+    .logo span { color: var(--accent); }
 
     .live-dot {
       width: 8px; height: 8px;
@@ -105,7 +106,7 @@
     }
     .refresh-btn:last-child { border-right: none; }
     .refresh-btn:hover { background: var(--surface2); color: var(--text); }
-    .refresh-btn.active { background: var(--blue); color: #fff; }
+    .refresh-btn.active { background: var(--accent); color: #fff; }
 
     .pill {
       background: var(--surface); border: 1px solid var(--border);
@@ -135,7 +136,7 @@
     .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
     .status-bar.all-good { background: rgba(34,197,94,.07);  color: var(--up);   border-bottom: 1px solid rgba(34,197,94,.15); }
     .status-bar.has-down { background: rgba(239,68,68,.07);  color: var(--down); border-bottom: 1px solid rgba(239,68,68,.15); }
-    .status-bar.has-deg  { background: rgba(249,115,22,.07); color: var(--deg);  border-bottom: 1px solid rgba(249,115,22,.15); }
+    .status-bar.has-deg  { background: rgba(250,204,21,.07); color: var(--deg);  border-bottom: 1px solid rgba(250,204,21,.18); }
     .status-bar.has-unk  { background: rgba(100,116,139,.05);color: var(--unk);  border-bottom: 1px solid var(--border); }
     #status-uptime { margin-left: auto; font-size: 12px; opacity: .7; }
 
@@ -153,7 +154,7 @@
       border-radius: var(--radius); padding: 1rem 1.25rem;
       transition: border-color .15s;
     }
-    .stat-card:hover { border-color: var(--blue); }
+    .stat-card:hover { border-color: var(--accent); }
     .stat-val { font-size: 1.9rem; font-weight: 700; line-height: 1; }
     .stat-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 5px; }
 
@@ -173,7 +174,7 @@
       border-radius: 8px; color: var(--text); font-size: 13px;
       font-family: inherit; outline: none; transition: border-color .15s;
     }
-    #search:focus { border-color: var(--blue); }
+    #search:focus { border-color: var(--accent); }
     #search::placeholder { color: var(--unk); }
 
     .filter-pills { display: flex; gap: 5px; flex-wrap: wrap; }
@@ -184,7 +185,7 @@
       cursor: pointer; transition: all .15s; font-family: inherit;
     }
     .filter-pill:hover { color: var(--text); background: var(--surface2); }
-    .filter-pill.active                         { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .filter-pill.active                         { background: var(--accent); color: #fff; border-color: var(--accent); }
     .filter-pill[data-filter="up"].active       { background: var(--up);   color: #fff; border-color: var(--up); }
     .filter-pill[data-filter="down"].active     { background: var(--down); color: #fff; border-color: var(--down); }
     .filter-pill[data-filter="degraded"].active { background: var(--deg);  color: #fff; border-color: var(--deg); }
@@ -195,7 +196,7 @@
       color: var(--muted); font-size: 12px; font-family: inherit;
       cursor: pointer; outline: none; margin-left: auto;
     }
-    .sort-select:focus { border-color: var(--blue); }
+    .sort-select:focus { border-color: var(--accent); }
 
     /* Results count */
     .results-count { font-size: 12px; color: var(--muted); margin-bottom: 1rem; min-height: 18px; }
@@ -251,17 +252,18 @@
       box-shadow: 0 6px 28px rgba(0,0,0,.4);
     }
     .card:focus-visible {
-      outline: 2px solid var(--blue);
+      outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
-    .card.active { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+    .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
     .card[data-status="up"]       { border-left: 3px solid var(--up); }
     .card[data-status="down"]     { border-left: 3px solid var(--down); background: rgba(239,68,68,.03); }
     .card[data-status="degraded"] { border-left: 3px solid var(--deg); }
     .card[data-status="unknown"]  { border-left: 3px solid var(--unk); }
 
-    .card[data-status="down"]:not(:hover) { box-shadow: -2px 0 14px rgba(239,68,68,.12); }
+    .card[data-status="down"]:not(:hover)     { box-shadow: -2px 0 14px rgba(239,68,68,.12); }
+    .card[data-status="degraded"]:not(:hover) { box-shadow: -2px 0 12px rgba(250,204,21,.09); }
 
     .card-top { display: flex; align-items: center; justify-content: space-between; }
     .card-name-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -334,8 +336,8 @@
       transition: background .12s, color .12s, opacity .12s;
       display: inline-flex; align-items: center; gap: 5px;
     }
-    .btn-primary { background: var(--blue); color: #fff; border-color: transparent; }
-    .btn-primary:hover { background: #2563eb; }
+    .btn-primary { background: var(--accent); color: #fff; border-color: transparent; }
+    .btn-primary:hover { background: var(--accent-hi); }
     .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
     .btn-close {
       background: transparent; color: var(--muted);
@@ -434,7 +436,7 @@
       display: inline-block; font-size: 9px; font-weight: 700;
       text-transform: uppercase; letter-spacing: .05em;
       padding: 1px 5px; border-radius: 3px; margin-left: 5px;
-      background: rgba(59,130,246,.15); color: var(--blue);
+      background: rgba(168,85,247,.16); color: var(--accent);
       vertical-align: middle;
     }
 
@@ -464,7 +466,7 @@
     .toast.show { transform: translateX(0); opacity: 1; }
     .toast-success { border-left: 3px solid var(--up); }
     .toast-error   { border-left: 3px solid var(--down); }
-    .toast-info    { border-left: 3px solid var(--blue); }
+    .toast-info    { border-left: 3px solid var(--accent); }
 
     /* ── Misc ────────────────────────────────────────────────────── */
     .spinner {
@@ -609,7 +611,7 @@
         if (r.status === 'up') return;
         const color = r.status === 'down'
           ? 'rgba(239,68,68,0.13)'
-          : 'rgba(249,115,22,0.10)';
+          : 'rgba(250,204,21,0.12)';
         const x0 = i === 0              ? left  : scales.x.getPixelForValue(i - 0.5);
         const x1 = i === rows.length - 1 ? right : scales.x.getPixelForValue(i + 0.5);
         ctx.fillStyle = color;
@@ -784,12 +786,17 @@
     }
   }
 
-  function renderStatusUptime() {
-    const allRows = Object.values(historyCache).flatMap(e => e.data);
-    if (!allRows.length) return;
-    const upCount = allRows.filter(r => r.status === 'up').length;
-    const pct     = ((upCount / allRows.length) * 100).toFixed(1);
-    document.getElementById('status-uptime').textContent = `Overall uptime ${pct}%`;
+  // Accurate windowed uptime from the /uptime aggregate (non-DOWN ratio over
+  // 24h), rather than the last 50 cached checks.
+  async function renderStatusUptime() {
+    try {
+      const rows  = await api('/uptime?window=24h');
+      const total = rows.reduce((a, r) => a + r.total_checks, 0);
+      const up    = rows.reduce((a, r) => a + r.up_checks, 0);
+      if (!total) return;
+      const pct = ((up / total) * 100).toFixed(1);
+      document.getElementById('status-uptime').textContent = `Overall uptime ${pct}% (24h)`;
+    } catch { /* leave the previous value in place */ }
   }
 
   function counts() {
@@ -987,7 +994,7 @@
   function latColor(ms) {
     if (ms == null) return 'var(--unk)';
     if (ms < 200)   return '#22c55e';
-    if (ms < 1000)  return '#f59e0b';
+    if (ms < 1000)  return '#facc15';
     return '#ef4444';
   }
 
@@ -1164,8 +1171,8 @@
         datasets: [{
           label: 'Latency (ms)',
           data,
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59,130,246,0.06)',
+          borderColor: '#a855f7',
+          backgroundColor: 'rgba(168,85,247,0.08)',
           pointBackgroundColor: colors,
           pointBorderColor: colors,
           pointRadius: 4,
@@ -1183,8 +1190,8 @@
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#1e293b', borderColor: '#334155', borderWidth: 1,
-            titleColor: '#94a3b8', bodyColor: '#f1f5f9', padding: 10,
+            backgroundColor: '#16161c', borderColor: '#2a2a35', borderWidth: 1,
+            titleColor: '#8b8b9c', bodyColor: '#ececf1', padding: 10,
             callbacks: {
               label: ctx => {
                 const row = ordered[ctx.dataIndex];
@@ -1196,13 +1203,13 @@
         },
         scales: {
           x: {
-            ticks: { color: '#64748b', maxTicksLimit: 8, maxRotation: 0, font: { size: 11 } },
-            grid:  { color: '#1e293b' },
+            ticks: { color: '#8b8b9c', maxTicksLimit: 8, maxRotation: 0, font: { size: 11 } },
+            grid:  { color: '#1f1f28' },
           },
           y: {
             beginAtZero: true,
-            ticks: { color: '#64748b', callback: v => v + ' ms', font: { size: 11 } },
-            grid:  { color: '#263548' },
+            ticks: { color: '#8b8b9c', callback: v => v + ' ms', font: { size: 11 } },
+            grid:  { color: '#2a2a35' },
           },
         },
       },

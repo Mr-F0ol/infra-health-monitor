@@ -122,6 +122,7 @@ services:
 | GET | `/services` | Current status of every configured service |
 | GET | `/history?service=name` | Check history for one service |
 | GET | `/metrics` | Prometheus exposition format |
+| GET | `/uptime?window=24h\|7d\|30d` | Availability % per service over a rolling window |
 | POST | `/reload` | Re-read `services.yaml` and reconcile scheduler jobs live |
 | POST | `/checks/run` | Run a one-off check immediately |
 | GET | `/checks/results` | Recent check results |
@@ -236,6 +237,21 @@ Rules live in `monitoring/alert_rules.yml`; routing is in
 `monitoring/alertmanager.yml`. The default receiver has no integrations, so
 alerts are visible in the Alertmanager UI (http://localhost:9093) out of the
 box — add a Slack/webhook/PagerDuty config there to route them out.
+
+## Uptime / SLA
+
+`GET /uptime` rolls up check history into an availability percentage per
+service over a window (`24h`, `7d` or `30d`):
+
+```bash
+curl -H "X-API-Key: $MONITOR_API_KEY" "http://localhost:8000/uptime?window=7d"
+# [{"service":"my-api","window":"7d","uptime_pct":99.8,"total_checks":10080,"up_checks":10060}]
+```
+
+Uptime counts every **non-`DOWN`** check as available (a `DEGRADED` service was
+still reachable), matching the `ServiceDown` alert's outage semantics. The
+dashboard's "Overall uptime" indicator reads this endpoint (24h). A service with
+no checks in the window returns `uptime_pct: null`.
 
 ## Grafana dashboard
 
