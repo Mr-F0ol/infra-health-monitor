@@ -2,8 +2,11 @@
 
 [![CI](https://github.com/Mr-F0ol/infra-health-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/Mr-F0ol/infra-health-monitor/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Mr-F0ol/infra-health-monitor/branch/main/graph/badge.svg)](https://codecov.io/gh/Mr-F0ol/infra-health-monitor)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A lightweight infrastructure health monitor that checks HTTP endpoints, TCP ports, and local system resources automatically — with scheduled monitoring, state-transition alerting, and Prometheus metrics.
+
+![Dashboard](docs/dashboard.png)
 
 ## Architecture
 
@@ -252,6 +255,15 @@ Uptime counts every **non-`DOWN`** check as available (a `DEGRADED` service was
 still reachable), matching the `ServiceDown` alert's outage semantics. The
 dashboard's "Overall uptime" indicator reads this endpoint (24h). A service with
 no checks in the window returns `uptime_pct: null`.
+
+## Built-in dashboard
+
+The API serves a self-contained dashboard at `/` — live service cards with
+status, latency sparklines, per-service uptime and a "Check now" action. It is
+intentionally a **single static HTML file** ([`src/monitor/static/index.html`](src/monitor/static/index.html))
+with inline CSS/JS and no build step or frontend dependencies: it ships with the
+container, needs no Node toolchain, and keeps the deploy story to one process.
+For richer time-series and alerting, use the Grafana dashboard below.
 
 ## Grafana dashboard
 
