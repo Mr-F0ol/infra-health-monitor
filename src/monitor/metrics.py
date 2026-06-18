@@ -27,6 +27,11 @@ checks_failed_total = Counter(
     "Total failed checks (down or degraded)",
     ["service", "type"],
 )
+cert_expiry_days = Gauge(
+    "monitor_cert_expiry_days",
+    "Days until the TLS certificate expires (HTTPS checks with a cert threshold)",
+    ["service"],
+)
 
 _STATE_VALUES: dict[CheckState, float] = {
     CheckState.UP: 1.0,
@@ -41,6 +46,7 @@ def record_outcome(
     check_type: str,
     state: CheckState,
     latency_ms: float | None,
+    cert_days_remaining: float | None = None,
 ) -> None:
     labels = {"service": name, "type": check_type}
     service_status.labels(**labels).set(_STATE_VALUES.get(state, 0.0))
@@ -49,3 +55,5 @@ def record_outcome(
         checks_failed_total.labels(**labels).inc()
     if latency_ms is not None:
         check_latency_ms.labels(**labels).observe(latency_ms)
+    if cert_days_remaining is not None:
+        cert_expiry_days.labels(service=name).set(cert_days_remaining)

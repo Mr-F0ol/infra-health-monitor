@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field, model_validator
 
 class ServiceThresholds(BaseModel):
     latency_ms: float | None = None
+    # Days-remaining below which an HTTPS cert is reported DEGRADED (None = off).
+    cert_expiry_days: float | None = None
     cpu: float = 90.0
     memory: float = 90.0
     disk: float = 90.0

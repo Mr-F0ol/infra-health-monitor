@@ -44,6 +44,7 @@ class CheckRequest(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
     timeout: float = Field(default_factory=lambda: settings.default_timeout, gt=0)
     latency_threshold_ms: float | None = Field(default=None, gt=0)
+    cert_expiry_days: float | None = Field(default=None, gt=0)
 
 
 class CheckResponse(BaseModel):
@@ -150,6 +151,7 @@ def _build_check(req: CheckRequest) -> BaseCheck:
             target=req.target,
             timeout=req.timeout,
             latency_threshold_ms=req.latency_threshold_ms,
+            cert_expiry_days=req.cert_expiry_days,
         )
     if req.type == "tcp":
         if req.port is None:
@@ -334,7 +336,13 @@ async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
     session.add(row)
     session.commit()
 
-    record_outcome(outcome.name, outcome.check_type, outcome.state, outcome.latency_ms)
+    record_outcome(
+        outcome.name,
+        outcome.check_type,
+        outcome.state,
+        outcome.latency_ms,
+        outcome.cert_days_remaining,
+    )
 
     return CheckResponse(
         name=outcome.name,

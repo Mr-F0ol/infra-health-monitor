@@ -30,3 +30,12 @@ groups:
         annotations:
           summary: "Service {{ $labels.service }} is DEGRADED"
           description: "{{ $labels.service }} ({{ $labels.type }}) has reported DEGRADED for 5m."
+
+      - alert: CertExpiringSoon
+        expr: monitor_cert_expiry_days < 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS cert for {{ $labels.service }} expires soon"
+          description: "{{ $labels.service }} TLS certificate expires in {{ $value | printf \"%.0f\" }} days."

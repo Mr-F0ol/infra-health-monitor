@@ -26,6 +26,7 @@ def _build_check(svc: ServiceConfig) -> BaseCheck:
             target=svc.target,
             timeout=svc.timeout,
             latency_threshold_ms=svc.thresholds.latency_ms,
+            cert_expiry_days=svc.thresholds.cert_expiry_days,
         )
     if svc.type == "tcp":
         return TcpCheck(
@@ -72,7 +73,13 @@ async def _run_service_job(
     except Exception:
         logger.exception("failed to persist check result for %s", svc.name)
 
-    record_outcome(outcome.name, outcome.check_type, outcome.state, outcome.latency_ms)
+    record_outcome(
+        outcome.name,
+        outcome.check_type,
+        outcome.state,
+        outcome.latency_ms,
+        outcome.cert_days_remaining,
+    )
 
     if notifier is not None:
         await notifier.notify(outcome)

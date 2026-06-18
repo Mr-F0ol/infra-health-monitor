@@ -202,6 +202,26 @@ services:
       latency_ms: 800     # 200 OK but slower than 800ms → DEGRADED
 ```
 
+### TLS certificate expiry
+
+Give an HTTPS service a `cert_expiry_days` threshold and the monitor opens a TLS
+handshake on each check to read the certificate. A cert expiring within the
+threshold is reported `DEGRADED`; an already-expired cert is `DOWN`:
+
+```yaml
+services:
+  - name: my-api
+    type: http
+    target: https://api.example.com
+    interval: 60
+    thresholds:
+      cert_expiry_days: 14    # DEGRADED when the cert expires in < 14 days
+```
+
+The days-remaining is exported as `monitor_cert_expiry_days{service=...}` and a
+`CertExpiringSoon` Prometheus alert fires below 14 days. Cert checking is
+opt-in — without the threshold (or for plain HTTP) no handshake is performed.
+
 ### Prometheus alerting (watches the watcher)
 
 The app's Discord/Telegram alerts can't fire if the monitor process itself
