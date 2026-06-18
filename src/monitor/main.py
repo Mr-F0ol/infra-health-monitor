@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from .alerts import DiscordProvider, Notifier, TelegramProvider
 from .alerts.base import AlertProvider
+from .auth import require_auth
 from .checks import BaseCheck, HttpCheck, SystemCheck, TcpCheck
 from .config import settings
 from .database import SessionLocal, get_session, init_db
@@ -121,6 +122,10 @@ app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
+# Applied to endpoints that expose monitoring data or trigger work. Liveness,
+# readiness and the metrics scrape target stay open for orchestrators/Prometheus.
+AuthDep = Depends(require_auth)
+
 
 # ---------------------------------------------------------------------------
 # Helpers shared between manual and scheduled checks
@@ -160,7 +165,7 @@ def _build_check(req: CheckRequest) -> BaseCheck:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/")
+@app.get("/", dependencies=[AuthDep])
 async def frontend() -> FileResponse:
     return FileResponse(_STATIC / "index.html")
 
@@ -207,7 +212,7 @@ async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/services", response_model=list[ServiceStatusResponse])
+@app.get("/services", response_model=list[ServiceStatusResponse], dependencies=[AuthDep])
 async def list_services(request: Request, session: SessionDep) -> list[ServiceStatusResponse]:
     services = request.app.state.services
     names = [svc.name for svc in services]
@@ -251,7 +256,7 @@ async def list_services(request: Request, session: SessionDep) -> list[ServiceSt
     return result
 
 
-@app.get("/history", response_model=list[CheckResponse])
+@app.get("/history", response_model=list[CheckResponse], dependencies=[AuthDep])
 async def get_history(
     session: SessionDep,
     service: str = Query(..., description="Service name"),
@@ -278,7 +283,7 @@ async def get_history(
     ]
 
 
-@app.post("/checks/run", response_model=CheckResponse)
+@app.post("/checks/run", response_model=CheckResponse, dependencies=[AuthDep])
 async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
     check = _build_check(req)
     outcome = await check.run()
@@ -306,7 +311,7 @@ async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
     )
 
 
-@app.get("/checks/results", response_model=list[CheckResponse])
+@app.get("/checks/results", response_model=list[CheckResponse], dependencies=[AuthDep])
 async def list_results(session: SessionDep, limit: int = 50) -> list[CheckResponse]:
     stmt = select(CheckResult).order_by(CheckResult.created_at.desc()).limit(limit)
     rows = session.execute(stmt).scalars().all()

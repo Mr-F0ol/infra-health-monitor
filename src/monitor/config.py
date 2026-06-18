@@ -35,5 +35,12 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # API authentication — all empty means auth is disabled (open access).
+    # Set api_key for header auth (X-API-Key) and/or basic_auth_* for the
+    # browser dashboard. /health, /ready and /metrics stay open regardless.
+    api_key: str = ""
+    basic_auth_user: str = ""
+    basic_auth_password: str = ""
+
 
 settings = Settings()

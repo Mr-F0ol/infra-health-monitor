@@ -125,6 +125,27 @@ services:
 | POST | `/checks/run` | Run a one-off check immediately |
 | GET | `/checks/results` | Recent check results |
 
+## Authentication
+
+Auth is **opt-in**. With no credentials set the API is open (the zero-friction
+quick-start). Set either or both schemes in `.env` to lock it down:
+
+```env
+MONITOR_API_KEY=long-random-string          # automation: header X-API-Key
+MONITOR_BASIC_AUTH_USER=admin                # browser dashboard
+MONITOR_BASIC_AUTH_PASSWORD=change-me
+```
+
+When enabled, protected endpoints (`/`, `/services`, `/history`, `/reload`,
+`/uptime`, `/checks/*`) require **either** a matching `X-API-Key` header **or**
+HTTP Basic credentials. `/health`, `/ready` and `/metrics` stay open so
+orchestrators and Prometheus can reach them. Use Basic Auth for the browser
+dashboard (native login prompt) and the API key for scripts:
+
+```bash
+curl -H "X-API-Key: $MONITOR_API_KEY" http://localhost:8000/services
+```
+
 ## Alerting
 
 Set any of these in `.env` to enable that channel:
