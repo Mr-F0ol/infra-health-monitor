@@ -24,10 +24,23 @@ class Settings(BaseSettings):
     memory_threshold: float = 90.0
     disk_threshold: float = 90.0
 
+    # Consecutive unhealthy checks required before an alert fires (anti-flapping).
+    failure_threshold: int = 3
+
+    # Days of check history to retain in the database (0 = keep forever).
+    retention_days: int = 30
+
     # Alert providers — leave empty to disable
     discord_webhook_url: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    # API authentication — all empty means auth is disabled (open access).
+    # Set api_key for header auth (X-API-Key) and/or basic_auth_* for the
+    # browser dashboard. /health, /ready and /metrics stay open regardless.
+    api_key: str = ""
+    basic_auth_user: str = ""
+    basic_auth_password: str = ""
 
 
 settings = Settings()

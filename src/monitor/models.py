@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import DateTime, Float, Index, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -18,6 +18,12 @@ class CheckResult(Base):
     """A single recorded outcome of running a check."""
 
     __tablename__ = "check_results"
+
+    # Composite index serving the hot query: latest rows for one service
+    # (WHERE name = ? ORDER BY created_at DESC).
+    __table_args__ = (
+        Index("ix_check_results_name_created", "name", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), index=True)

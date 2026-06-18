@@ -8,15 +8,19 @@ on:
 
 jobs:
   quality:
-    name: Lint · Type-check · Test
+    name: Lint · Type-check · Test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install dependencies
@@ -29,19 +33,48 @@ jobs:
         run: mypy src
 
       - name: Test (pytest + coverage)
-        run: pytest --cov=monitor --cov-report=xml --cov-report=term-missing
+        run: pytest --cov=monitor --cov-report=xml --cov-report=term-missing --cov-fail-under=85
         env:
           MONITOR_DATABASE_URL: "sqlite:///./test.db"
           MONITOR_SERVICES_FILE: "services.yaml"
 
       - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4
         with:
           files: coverage.xml
           fail_ci_if_error: false
 
+  security:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Freeze the project's own dependency tree *before* installing pip-audit,
+      # so the audit covers only what the app ships — not pip-audit's deps or
+      # the runner's base pip/setuptools (excluded by pip freeze). This makes
+      # the gate fail on real project vulnerabilities without going red over
+      # ecosystem packages the project doesn't control.
+      - name: Install project
+        run: pip install -e .
+
+      - name: Freeze project dependencies
+        run: pip freeze --exclude-editable > audit-reqs.txt
+
+      - name: Audit dependencies
+        run: |
+          pip install pip-audit
+          pip-audit --requirement audit-reqs.txt
+
   docker:
-    name: Docker build
+    name: Docker build · image scan
     runs-on: ubuntu-latest
     needs: quality
 
@@ -50,3 +83,12 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t infra-health-monitor:${{ github.sha }} .
+
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: infra-health-monitor:${{ github.sha }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

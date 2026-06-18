@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from monitor.checks.base import CheckOutcome, CheckState
-from monitor.scheduler import _build_check, _run_service_job, setup_scheduler
+from monitor.scheduler import (
+    _build_check,
+    _run_service_job,
+    reconcile_jobs,
+    setup_scheduler,
+)
 from monitor.service_config import ServiceConfig, load_services
 
 # ---------------------------------------------------------------------------
@@ -62,6 +67,37 @@ def test_load_services_raises_when_file_missing(tmp_path):
         load_services(tmp_path / "missing.yaml")
 
 
+def test_load_services_rejects_duplicate_names(tmp_path):
+    yaml_content = """
+services:
+  - name: web
+    type: http
+    target: https://a.com
+  - name: web
+    type: http
+    target: https://b.com
+"""
+    f = tmp_path / "services.yaml"
+    f.write_text(yaml_content)
+
+    with pytest.raises(ValueError, match="duplicate service names: web"):
+        load_services(f)
+
+
+def test_load_services_rejects_tcp_without_port(tmp_path):
+    yaml_content = """
+services:
+  - name: db
+    type: tcp
+    target: localhost
+"""
+    f = tmp_path / "services.yaml"
+    f.write_text(yaml_content)
+
+    with pytest.raises(ValueError, match="tcp checks require a port"):
+        load_services(f)
+
+
 # ---------------------------------------------------------------------------
 # setup_scheduler
 # ---------------------------------------------------------------------------
@@ -97,6 +133,74 @@ def test_setup_scheduler_job_intervals():
 def test_setup_scheduler_empty_services():
     scheduler = setup_scheduler([], MagicMock())
     assert scheduler.get_jobs() == []
+
+
+def test_setup_scheduler_adds_purge_job_when_retention_set():
+    scheduler = setup_scheduler([], MagicMock(), retention_days=30)
+    job_ids = {j.id for j in scheduler.get_jobs()}
+    assert "purge_old_results" in job_ids
+
+
+def test_setup_scheduler_no_purge_job_when_retention_zero():
+    scheduler = setup_scheduler([], MagicMock(), retention_days=0)
+    assert scheduler.get_jobs() == []
+
+
+# ---------------------------------------------------------------------------
+# reconcile_jobs
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_adds_new_service():
+    scheduler = setup_scheduler([], MagicMock())
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+
+    diff = reconcile_jobs(scheduler, services, MagicMock())
+
+    assert diff == {"added": ["web"], "removed": [], "updated": []}
+    assert {j.id for j in scheduler.get_jobs()} == {"check_web"}
+
+
+def test_reconcile_removes_dropped_service():
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+    scheduler = setup_scheduler(services, MagicMock())
+
+    diff = reconcile_jobs(scheduler, [], MagicMock())
+
+    assert diff == {"added": [], "removed": ["web"], "updated": []}
+    assert scheduler.get_jobs() == []
+
+
+def test_reconcile_updates_changed_interval():
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+    scheduler = setup_scheduler(services, MagicMock())
+
+    changed = [ServiceConfig(name="web", type="http", target="http://a.com", interval=99)]
+    diff = reconcile_jobs(scheduler, changed, MagicMock())
+
+    assert diff == {"added": [], "removed": [], "updated": ["web"]}
+    job = scheduler.get_job("check_web")
+    assert job.trigger.interval.total_seconds() == 99
+
+
+def test_reconcile_leaves_unchanged_service_untouched():
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+    scheduler = setup_scheduler(services, MagicMock())
+
+    diff = reconcile_jobs(scheduler, list(services), MagicMock())
+
+    assert diff == {"added": [], "removed": [], "updated": []}
+
+
+def test_reconcile_preserves_purge_job():
+    scheduler = setup_scheduler([], MagicMock(), retention_days=30)
+    services = [ServiceConfig(name="web", type="http", target="http://a.com", interval=30)]
+
+    reconcile_jobs(scheduler, services, MagicMock())
+
+    job_ids = {j.id for j in scheduler.get_jobs()}
+    assert "purge_old_results" in job_ids
+    assert "check_web" in job_ids
 
 
 # ---------------------------------------------------------------------------
@@ -191,4 +295,36 @@ async def test_run_service_job_calls_notifier_when_set():
 
         await _run_service_job(svc, MagicMock(return_value=mock_session), notifier=mock_notifier)
 
+    mock_notifier.notify.assert_awaited_once_with(outcome)
+
+
+async def test_run_service_job_survives_persistence_failure():
+    """A DB write failure must not suppress metrics or alerting."""
+    svc = ServiceConfig(name="web", type="http", target="https://example.com", interval=60)
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.commit.side_effect = RuntimeError("db down")
+
+    outcome = CheckOutcome(
+        name="web",
+        check_type="http",
+        target="https://example.com",
+        state=CheckState.DOWN,
+        latency_ms=None,
+    )
+    mock_notifier = AsyncMock()
+
+    with (
+        patch("monitor.scheduler._build_check") as mock_build,
+        patch("monitor.scheduler.record_outcome") as mock_record,
+    ):
+        mock_check = AsyncMock()
+        mock_check.run.return_value = outcome
+        mock_build.return_value = mock_check
+
+        await _run_service_job(svc, MagicMock(return_value=mock_session), notifier=mock_notifier)
+
+    mock_record.assert_called_once()
     mock_notifier.notify.assert_awaited_once_with(outcome)

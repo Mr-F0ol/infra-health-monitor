@@ -27,6 +27,9 @@ class CheckOutcome:
     state: CheckState
     latency_ms: float | None = None
     detail: str | None = None
+    #: days until the TLS certificate expires (HTTPS checks with a cert
+    #: threshold); ``None`` when not measured.
+    cert_days_remaining: float | None = None
 
 
 @dataclass
@@ -54,6 +57,7 @@ class BaseCheck(ABC):
         state: CheckState,
         latency_ms: float | None = None,
         detail: str | None = None,
+        cert_days_remaining: float | None = None,
     ) -> CheckOutcome:
         return CheckOutcome(
             name=self.name,
@@ -62,6 +66,7 @@ class BaseCheck(ABC):
             state=state,
             latency_ms=latency_ms,
             detail=detail,
+            cert_days_remaining=cert_days_remaining,
         )
 
     @staticmethod

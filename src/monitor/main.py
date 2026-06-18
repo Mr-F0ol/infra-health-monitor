@@ -5,26 +5,28 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session
 
 from .alerts import DiscordProvider, Notifier, TelegramProvider
 from .alerts.base import AlertProvider
+from .auth import require_auth
 from .checks import BaseCheck, HttpCheck, SystemCheck, TcpCheck
 from .config import settings
 from .database import SessionLocal, get_session, init_db
+from .metrics import record_outcome
 from .models import CheckResult
-from .scheduler import setup_scheduler
+from .scheduler import reconcile_jobs, setup_scheduler
 from .service_config import ServiceConfig, load_services
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,8 @@ class CheckRequest(BaseModel):
     target: str
     port: int | None = Field(default=None, ge=1, le=65535)
     timeout: float = Field(default_factory=lambda: settings.default_timeout, gt=0)
+    latency_threshold_ms: float | None = Field(default=None, gt=0)
+    cert_expiry_days: float | None = Field(default=None, gt=0)
 
 
 class CheckResponse(BaseModel):
@@ -51,6 +55,30 @@ class CheckResponse(BaseModel):
     latency_ms: float | None = None
     detail: str | None = None
     checked_at: datetime | None = None
+
+
+class ReloadResponse(BaseModel):
+    services: int
+    added: list[str]
+    removed: list[str]
+    updated: list[str]
+
+
+class UptimeResponse(BaseModel):
+    service: str
+    window: str
+    # Percentage of non-DOWN checks in the window; None when there's no data.
+    uptime_pct: float | None = None
+    total_checks: int = 0
+    up_checks: int = 0
+
+
+# Window label → lookback duration for the uptime aggregation.
+_UPTIME_WINDOWS: dict[str, timedelta] = {
+    "24h": timedelta(hours=24),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+}
 
 
 class ServiceStatusResponse(BaseModel):
@@ -93,16 +121,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     notifier: Notifier | None = None
     if providers:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=False)
-        notifier = Notifier(redis_client, providers)
+        notifier = Notifier(redis_client, providers, settings.failure_threshold)
 
-    scheduler = setup_scheduler(services, SessionLocal, notifier)
-    if services:
-        scheduler.start()
+    # Exposed to the readiness probe so it can verify Redis when alerting is on.
+    app.state.redis = redis_client
+
+    scheduler = setup_scheduler(
+        services, SessionLocal, notifier, retention_days=settings.retention_days
+    )
+    # Always start the scheduler so /reload can add the first jobs at runtime
+    # even when the file was empty/missing at boot.
+    scheduler.start()
+
+    # Exposed to /reload so it can reconcile jobs without a restart.
+    app.state.scheduler = scheduler
+    app.state.notifier = notifier
 
     yield
 
-    if services:
-        scheduler.shutdown(wait=False)
+    scheduler.shutdown(wait=False)
     if redis_client is not None:
         await redis_client.aclose()  # type: ignore[attr-defined]
 
@@ -114,6 +151,10 @@ app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
+# Applied to endpoints that expose monitoring data or trigger work. Liveness,
+# readiness and the metrics scrape target stay open for orchestrators/Prometheus.
+AuthDep = Depends(require_auth)
+
 
 # ---------------------------------------------------------------------------
 # Helpers shared between manual and scheduled checks
@@ -122,12 +163,22 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 def _build_check(req: CheckRequest) -> BaseCheck:
     if req.type == "http":
-        return HttpCheck(name=req.name, target=req.target, timeout=req.timeout)
+        return HttpCheck(
+            name=req.name,
+            target=req.target,
+            timeout=req.timeout,
+            latency_threshold_ms=req.latency_threshold_ms,
+            cert_expiry_days=req.cert_expiry_days,
+        )
     if req.type == "tcp":
         if req.port is None:
             raise ValueError("port is required for tcp checks")
         return TcpCheck(
-            name=req.name, target=req.target, timeout=req.timeout, port=req.port
+            name=req.name,
+            target=req.target,
+            timeout=req.timeout,
+            port=req.port,
+            latency_threshold_ms=req.latency_threshold_ms,
         )
     return SystemCheck(
         name=req.name,
@@ -144,14 +195,46 @@ def _build_check(req: CheckRequest) -> BaseCheck:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/")
+@app.get("/", dependencies=[AuthDep])
 async def frontend() -> FileResponse:
     return FileResponse(_STATIC / "index.html")
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    """Liveness — the process is up and serving. Cheap and dependency-free."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready(request: Request, session: SessionDep) -> JSONResponse:
+    """Readiness — verifies the backing stores the monitor actually needs.
+
+    Returns 503 if the database is unreachable (or Redis, when alerting is
+    enabled), so a load balancer / orchestrator can stop routing to an instance
+    that is up but unable to persist results.
+    """
+    checks: dict[str, str] = {}
+
+    try:
+        session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {exc}"
+
+    redis_client: Redis[bytes] | None = getattr(request.app.state, "redis", None)
+    if redis_client is not None:
+        try:
+            await redis_client.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            checks["redis"] = f"error: {exc}"
+
+    healthy = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        {"ready": healthy, "checks": checks},
+        status_code=200 if healthy else 503,
+    )
 
 
 @app.get("/metrics")
@@ -159,17 +242,35 @@ async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/services", response_model=list[ServiceStatusResponse])
+@app.get("/services", response_model=list[ServiceStatusResponse], dependencies=[AuthDep])
 async def list_services(request: Request, session: SessionDep) -> list[ServiceStatusResponse]:
-    result = []
-    for svc in request.app.state.services:
-        stmt = (
-            select(CheckResult)
-            .where(CheckResult.name == svc.name)
-            .order_by(CheckResult.created_at.desc())
-            .limit(1)
+    services = request.app.state.services
+    names = [svc.name for svc in services]
+
+    # Latest result per service in a single round-trip: find the max timestamp
+    # per name, then join back to fetch the corresponding rows.
+    latest: dict[str, CheckResult] = {}
+    if names:
+        newest = (
+            select(
+                CheckResult.name,
+                func.max(CheckResult.created_at).label("created_at"),
+            )
+            .where(CheckResult.name.in_(names))
+            .group_by(CheckResult.name)
+            .subquery()
         )
-        row = session.execute(stmt).scalar_one_or_none()
+        stmt = select(CheckResult).join(
+            newest,
+            (CheckResult.name == newest.c.name)
+            & (CheckResult.created_at == newest.c.created_at),
+        )
+        for row in session.execute(stmt).scalars():
+            latest[row.name] = row
+
+    result = []
+    for svc in services:
+        last = latest.get(svc.name)
         result.append(
             ServiceStatusResponse(
                 name=svc.name,
@@ -177,15 +278,77 @@ async def list_services(request: Request, session: SessionDep) -> list[ServiceSt
                 target=svc.target,
                 port=svc.port,
                 interval=svc.interval,
-                status=row.status if row else "unknown",
-                latency_ms=row.latency_ms if row else None,
-                last_checked=row.created_at if row else None,
+                status=last.status if last else "unknown",
+                latency_ms=last.latency_ms if last else None,
+                last_checked=last.created_at if last else None,
             )
         )
     return result
 
 
-@app.get("/history", response_model=list[CheckResponse])
+@app.get("/uptime", response_model=list[UptimeResponse], dependencies=[AuthDep])
+async def get_uptime(
+    request: Request,
+    session: SessionDep,
+    window: Literal["24h", "7d", "30d"] = Query(default="24h"),
+    service: str | None = Query(default=None, description="Filter to one service"),
+) -> list[UptimeResponse]:
+    """Availability per service over a rolling window (non-DOWN ratio)."""
+    services = request.app.state.services
+    names = [svc.name for svc in services if service is None or svc.name == service]
+    if not names:
+        return []
+
+    cutoff = datetime.now(UTC) - _UPTIME_WINDOWS[window]
+    up_expr = func.sum(case((CheckResult.status != "down", 1), else_=0))
+    stmt = (
+        select(CheckResult.name, func.count().label("total"), up_expr.label("up"))
+        .where(CheckResult.name.in_(names), CheckResult.created_at >= cutoff)
+        .group_by(CheckResult.name)
+    )
+    stats = {name: (int(total), int(up or 0)) for name, total, up in session.execute(stmt)}
+
+    result = []
+    for name in names:
+        total, up = stats.get(name, (0, 0))
+        pct = round(100 * up / total, 3) if total else None
+        result.append(
+            UptimeResponse(
+                service=name,
+                window=window,
+                uptime_pct=pct,
+                total_checks=total,
+                up_checks=up,
+            )
+        )
+    return result
+
+
+@app.post("/reload", response_model=ReloadResponse, dependencies=[AuthDep])
+async def reload_services(request: Request) -> ReloadResponse:
+    """Re-read services.yaml and reconcile scheduler jobs without a restart.
+
+    On an invalid file we return 400 and leave the running jobs untouched.
+    """
+    try:
+        services = load_services(settings.services_file)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=f"services file not found: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid services file: {exc}") from exc
+
+    diff = reconcile_jobs(
+        request.app.state.scheduler,
+        services,
+        SessionLocal,
+        request.app.state.notifier,
+    )
+    request.app.state.services = services
+    logger.info("reloaded services: %s", diff)
+    return ReloadResponse(services=len(services), **diff)
+
+
+@app.get("/history", response_model=list[CheckResponse], dependencies=[AuthDep])
 async def get_history(
     session: SessionDep,
     service: str = Query(..., description="Service name"),
@@ -212,7 +375,7 @@ async def get_history(
     ]
 
 
-@app.post("/checks/run", response_model=CheckResponse)
+@app.post("/checks/run", response_model=CheckResponse, dependencies=[AuthDep])
 async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
     check = _build_check(req)
     outcome = await check.run()
@@ -228,6 +391,14 @@ async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
     session.add(row)
     session.commit()
 
+    record_outcome(
+        outcome.name,
+        outcome.check_type,
+        outcome.state,
+        outcome.latency_ms,
+        outcome.cert_days_remaining,
+    )
+
     return CheckResponse(
         name=outcome.name,
         check_type=outcome.check_type,
@@ -238,7 +409,7 @@ async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
     )
 
 
-@app.get("/checks/results", response_model=list[CheckResponse])
+@app.get("/checks/results", response_model=list[CheckResponse], dependencies=[AuthDep])
 async def list_results(session: SessionDep, limit: int = 50) -> list[CheckResponse]:
     stmt = select(CheckResult).order_by(CheckResult.created_at.desc()).limit(limit)
     rows = session.execute(stmt).scalars().all()

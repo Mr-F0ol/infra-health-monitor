@@ -16,7 +16,7 @@ services:
 
   - name: local-postgres
     type: tcp
-    target: localhost
+    target: db
     port: 5432
     interval: 30
 

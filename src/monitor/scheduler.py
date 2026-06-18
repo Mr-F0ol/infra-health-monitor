@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
 from .alerts.notifier import Notifier
@@ -19,13 +21,20 @@ logger = logging.getLogger(__name__)
 
 def _build_check(svc: ServiceConfig) -> BaseCheck:
     if svc.type == "http":
-        return HttpCheck(name=svc.name, target=svc.target, timeout=svc.timeout)
+        return HttpCheck(
+            name=svc.name,
+            target=svc.target,
+            timeout=svc.timeout,
+            latency_threshold_ms=svc.thresholds.latency_ms,
+            cert_expiry_days=svc.thresholds.cert_expiry_days,
+        )
     if svc.type == "tcp":
         return TcpCheck(
             name=svc.name,
             target=svc.target,
             timeout=svc.timeout,
             port=svc.port or 80,
+            latency_threshold_ms=svc.thresholds.latency_ms,
         )
     return SystemCheck(
         name=svc.name,
@@ -45,20 +54,32 @@ async def _run_service_job(
     check = _build_check(svc)
     outcome = await check.run()
 
-    with session_factory() as session:
-        session.add(
-            CheckResult(
-                name=outcome.name,
-                check_type=outcome.check_type,
-                target=outcome.target,
-                status=outcome.state.value,
-                latency_ms=outcome.latency_ms,
-                detail=outcome.detail,
+    # Persistence is the least critical step: if the DB is momentarily
+    # unreachable we still want the metric exported and the alert sent, so the
+    # write is isolated and its failure never suppresses the rest.
+    try:
+        with session_factory() as session:
+            session.add(
+                CheckResult(
+                    name=outcome.name,
+                    check_type=outcome.check_type,
+                    target=outcome.target,
+                    status=outcome.state.value,
+                    latency_ms=outcome.latency_ms,
+                    detail=outcome.detail,
+                )
             )
-        )
-        session.commit()
+            session.commit()
+    except Exception:
+        logger.exception("failed to persist check result for %s", svc.name)
 
-    record_outcome(outcome.name, outcome.check_type, outcome.state, outcome.latency_ms)
+    record_outcome(
+        outcome.name,
+        outcome.check_type,
+        outcome.state,
+        outcome.latency_ms,
+        outcome.cert_days_remaining,
+    )
 
     if notifier is not None:
         await notifier.notify(outcome)
@@ -71,21 +92,102 @@ async def _run_service_job(
     )
 
 
+def _purge_old_results(
+    session_factory: sessionmaker,  # type: ignore[type-arg]
+    retention_days: int,
+) -> None:
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    with session_factory() as session:
+        result = session.execute(
+            delete(CheckResult).where(CheckResult.created_at < cutoff)
+        )
+        session.commit()
+    logger.info("purged %d check results older than %d days", result.rowcount, retention_days)
+
+
+def _job_id(name: str) -> str:
+    return f"check_{name}"
+
+
+def _add_service_job(
+    scheduler: AsyncIOScheduler,
+    svc: ServiceConfig,
+    session_factory: sessionmaker,  # type: ignore[type-arg]
+    notifier: Notifier | None,
+) -> None:
+    scheduler.add_job(
+        _run_service_job,
+        trigger="interval",
+        seconds=svc.interval,
+        args=[svc, session_factory, notifier],
+        id=_job_id(svc.name),
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=30,
+    )
+
+
+def reconcile_jobs(
+    scheduler: AsyncIOScheduler,
+    services: list[ServiceConfig],
+    session_factory: sessionmaker,  # type: ignore[type-arg]
+    notifier: Notifier | None = None,
+) -> dict[str, list[str]]:
+    """Bring the running scheduler in line with ``services`` without a restart.
+
+    Diffs the desired services against the live check jobs: removes jobs whose
+    service is gone, adds jobs for new services, and replaces jobs whose
+    interval changed (leaving unchanged ones untouched). Returns the diff so the
+    caller can report what happened.
+    """
+    desired = {svc.name: svc for svc in services}
+    live = {
+        job.id[len("check_") :]: job
+        for job in scheduler.get_jobs()
+        if job.id.startswith("check_")
+    }
+
+    added, removed, updated = [], [], []
+
+    for name in live.keys() - desired.keys():
+        scheduler.remove_job(_job_id(name))
+        removed.append(name)
+
+    for name, svc in desired.items():
+        job = live.get(name)
+        if job is None:
+            _add_service_job(scheduler, svc, session_factory, notifier)
+            added.append(name)
+        elif job.args[0] != svc:
+            # Any field changed (interval, target, thresholds, …) → replace.
+            # Remove first so the new trigger applies whether or not the
+            # scheduler is already running.
+            scheduler.remove_job(_job_id(name))
+            _add_service_job(scheduler, svc, session_factory, notifier)
+            updated.append(name)
+
+    return {"added": sorted(added), "removed": sorted(removed), "updated": sorted(updated)}
+
+
 def setup_scheduler(
     services: list[ServiceConfig],
     session_factory: sessionmaker,  # type: ignore[type-arg]
     notifier: Notifier | None = None,
+    retention_days: int = 0,
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     for svc in services:
+        _add_service_job(scheduler, svc, session_factory, notifier)
+    if retention_days > 0:
+        # Fixed daily time rather than 24h-from-boot, so frequent restarts
+        # (deploys, OOM) can't keep postponing the purge indefinitely.
         scheduler.add_job(
-            _run_service_job,
-            trigger="interval",
-            seconds=svc.interval,
-            args=[svc, session_factory, notifier],
-            id=f"check_{svc.name}",
+            _purge_old_results,
+            trigger="cron",
+            hour=3,
+            args=[session_factory, retention_days],
+            id="purge_old_results",
             replace_existing=True,
             max_instances=1,
-            misfire_grace_time=30,
         )
     return scheduler

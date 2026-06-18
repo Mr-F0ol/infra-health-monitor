@@ -16,6 +16,7 @@ class TcpCheck(BaseCheck):
     """
 
     port: int = 0
+    latency_threshold_ms: float | None = None
 
     check_type: str = field(default="tcp", init=False)
 
@@ -37,6 +38,12 @@ class TcpCheck(BaseCheck):
             await writer.wait_closed()
         except OSError:
             pass
-        return self._outcome(
-            CheckState.UP, latency, f"connected to {self.target}:{self.port}"
-        )
+
+        detail = f"connected to {self.target}:{self.port}"
+        if self.latency_threshold_ms is not None and latency > self.latency_threshold_ms:
+            return self._outcome(
+                CheckState.DEGRADED,
+                latency,
+                f"{detail} — slow ({latency:.0f}ms > {self.latency_threshold_ms:.0f}ms)",
+            )
+        return self._outcome(CheckState.UP, latency, detail)
