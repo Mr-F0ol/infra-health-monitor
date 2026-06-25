@@ -7,8 +7,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      MONITOR_DATABASE_URL: postgresql+psycopg://monitor:monitor@db:5432/monitor
-      MONITOR_REDIS_URL: redis://redis:6379/0
+      MONITOR_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-monitor}:${POSTGRES_PASSWORD:-monitor}@db:5432/${POSTGRES_DB:-monitor}
+      MONITOR_REDIS_URL: redis://:${REDIS_PASSWORD:-monitor}@redis:6379/0
+      MONITOR_LOG_FORMAT: json
     env_file:
       - .env
     volumes:
@@ -37,23 +38,26 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: monitor
-      POSTGRES_PASSWORD: monitor
-      POSTGRES_DB: monitor
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-monitor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monitor}
+      POSTGRES_DB: ${POSTGRES_DB:-monitor}
+    # No host port: the database is reached only over the internal compose
+    # network by the monitor service. Debug with `docker compose exec db psql`.
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U monitor"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monitor}"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # Require a password and keep Redis off the host network — it holds alert
+    # state and must not be reachable unauthenticated.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-monitor}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-monitor}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
