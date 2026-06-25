@@ -33,6 +33,21 @@ cert_expiry_days = Gauge(
     ["service"],
 )
 
+# ── HTTP API metrics (the monitor observing itself) ─────────────────────────
+# Labelled by the *route template* (e.g. "/history"), never the raw path, to
+# keep cardinality bounded regardless of query strings or service names.
+http_requests_total = Counter(
+    "monitor_http_requests_total",
+    "Total HTTP requests handled by the API",
+    ["method", "path", "status"],
+)
+http_request_duration_seconds = Histogram(
+    "monitor_http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+
 _STATE_VALUES: dict[CheckState, float] = {
     CheckState.UP: 1.0,
     CheckState.DEGRADED: 0.0,
@@ -57,3 +72,10 @@ def record_outcome(
         check_latency_ms.labels(**labels).observe(latency_ms)
     if cert_days_remaining is not None:
         cert_expiry_days.labels(service=name).set(cert_days_remaining)
+
+
+def record_http_request(
+    method: str, path: str, status: int, duration_seconds: float
+) -> None:
+    http_requests_total.labels(method=method, path=path, status=str(status)).inc()
+    http_request_duration_seconds.labels(method=method, path=path).observe(duration_seconds)

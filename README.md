@@ -165,6 +165,56 @@ dashboard (native login prompt) and the API key for scripts:
 curl -H "X-API-Key: $MONITOR_API_KEY" http://localhost:8000/services
 ```
 
+## Logging
+
+Logs go to stdout in one of two formats, selected by `MONITOR_LOG_FORMAT`:
+
+- **`text`** (default) — human-readable, for local development.
+- **`json`** — one structured object per line, ready for a log aggregator
+  (Loki / ELK / Datadog). The Docker image sets this.
+
+```env
+MONITOR_LOG_LEVEL=INFO     # DEBUG | INFO | WARNING | ERROR
+MONITOR_LOG_FORMAT=json
+```
+
+Each JSON line carries `timestamp`, `level`, `logger`, `message`, `request_id`,
+and any structured fields passed via `extra=` (plus `exc_info` on errors):
+
+```json
+{"timestamp":"2026-06-25T14:32:01.123+00:00","level":"INFO","logger":"monitor.scheduler","message":"checked my-api → up (42.0ms)","request_id":"-"}
+```
+
+> Application logs (`monitor.*`) are formatted by this config; uvicorn's own
+> access logs keep their default format.
+
+### Correlation IDs
+
+Every HTTP request gets a correlation id — reused from an inbound `X-Request-ID`
+header or generated otherwise. It is echoed back in the `X-Request-ID` response
+header and attached to every log line emitted while handling the request
+(`request_id` field), so a single request can be traced end-to-end across logs.
+Background scheduler logs use `-`.
+
+## Tracing
+
+Distributed tracing is **opt-in** via OpenTelemetry. Install the extra and point
+it at a collector (Tempo / Jaeger / OTLP endpoint):
+
+```bash
+pip install '.[otel]'
+```
+
+```env
+MONITOR_OTEL_ENABLED=true
+MONITOR_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+MONITOR_OTEL_SERVICE_NAME=infra-health-monitor
+```
+
+When enabled, FastAPI requests are auto-instrumented and spans are exported via
+OTLP/gRPC. The heavy OTel packages are kept out of the default install, so a
+standard deployment stays lean — enabling tracing is a deliberate opt-in.
+
 ## Alerting
 
 Set any of these in `.env` to enable that channel:
@@ -265,6 +315,25 @@ with inline CSS/JS and no build step or frontend dependencies: it ships with the
 container, needs no Node toolchain, and keeps the deploy story to one process.
 For richer time-series and alerting, use the Grafana dashboard below.
 
+## Exposed metrics
+
+`GET /metrics` serves Prometheus exposition covering both the monitored services
+and the API itself:
+
+| Metric | Type | Labels | Meaning |
+|--------|------|--------|---------|
+| `monitor_service_status` | gauge | `service`, `type` | 1=up, 0=degraded, -1=down |
+| `monitor_check_latency_ms` | histogram | `service`, `type` | Check latency |
+| `monitor_checks_total` | counter | `service`, `type` | Checks executed |
+| `monitor_checks_failed_total` | counter | `service`, `type` | Down/degraded checks |
+| `monitor_cert_expiry_days` | gauge | `service` | Days until TLS cert expiry |
+| `monitor_http_requests_total` | counter | `method`, `path`, `status` | API requests handled |
+| `monitor_http_request_duration_seconds` | histogram | `method`, `path` | API request latency |
+
+The HTTP metrics are labelled by **route template** (e.g. `/history`), never the
+raw path, so cardinality stays bounded. The `/metrics` scrape endpoint is
+excluded from its own counters.
+
 ## Grafana dashboard
 
 The dashboard is provisioned automatically from `monitoring/grafana/dashboards/infra-monitor.json` and includes:
@@ -308,19 +377,24 @@ API (see `docker-compose.yml`).
 
 ## Production notes
 
-- **Hardening:** the bundled `docker-compose.yml` uses demo credentials
-  (`monitor`/`monitor` for Postgres, `admin` for Grafana). Override
-  `GRAFANA_ADMIN_PASSWORD` and the Postgres secrets, and put the API behind a
-  reverse proxy with auth/TLS — `/services`, `/history` and `/metrics` are
-  unauthenticated by design (intended for a private network or scrape target).
+- **Hardening:** the datastores are **not published to the host** — Postgres and
+  Redis are reachable only over the internal compose network, and Redis runs
+  with `--requirepass`. Credentials default to demo values for the quick-start
+  but are fully overridable via `.env` (`POSTGRES_USER` / `POSTGRES_PASSWORD` /
+  `POSTGRES_DB`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`) — **change them for
+  anything public.** Put the API behind a reverse proxy with auth/TLS:
+  `/services`, `/history` and `/metrics` are unauthenticated by design (intended
+  for a private network or scrape target).
 - **Container:** runs as a non-root user from a multi-stage image, with a
   `HEALTHCHECK` and CPU/memory limits.
 - **Data retention:** check history is purged after `MONITOR_RETENTION_DAYS`
   (default 30; `0` keeps everything). Prometheus keeps 7 days of metrics.
-- **High availability:** the scheduler runs **in-process**, so run a *single*
-  instance. Two replicas would double every check and alert — there is no
-  leader election. For HA, externalise the scheduler (e.g. APScheduler with a
-  shared jobstore, or a dedicated worker) before scaling out.
+- **High availability:** the scheduler runs **in-process**. By default run a
+  *single* instance — two replicas would double every check and alert. Set
+  `MONITOR_HA_ENABLED=true` (requires Redis) to run multiple replicas safely:
+  they elect a single leader via a Redis lock and only the leader runs checks,
+  while the rest stay as warm standbys that take over within one
+  `MONITOR_LEADER_TTL` (default 30s) if the leader dies.
 - **Supply chain:** CI runs `pip-audit` on dependencies and Trivy on the built
   image.
 
@@ -331,5 +405,6 @@ API (see `docker-compose.yml`).
 | Scheduler | APScheduler 3.x (in-process) | No broker needed; single process is enough at this scale. Celery would require a separate worker + broker. |
 | ORM | SQLAlchemy sync | Check jobs are short-lived inserts; async ORM adds complexity with no throughput benefit here. |
 | Alert dedup | Redis key per service | Simplest durable store for a single state value; avoids a message queue entirely. |
+| HA model | Redis leader lock (opt-in) | One active replica + warm standbys without a broker or shared jobstore; the lock alone prevents double-execution. |
 | Metrics | prometheus-client | Standard exposition format; the Prometheus + Grafana pair is the industry default for this use case. |
 | Config split | YAML for services, `.env` for secrets | Services are structural config (version-controlled); credentials belong in the environment. |
