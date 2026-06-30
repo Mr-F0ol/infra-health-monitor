@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
+import time
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -17,6 +21,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session
+from starlette.middleware.base import RequestResponseEndpoint
 
 from .alerts import DiscordProvider, Notifier, TelegramProvider
 from .alerts.base import AlertProvider
@@ -24,10 +29,16 @@ from .auth import require_auth
 from .checks import BaseCheck, HttpCheck, SystemCheck, TcpCheck
 from .config import settings
 from .database import SessionLocal, get_session, init_db
-from .metrics import record_outcome
+from .leader import LeaderLock
+from .logging_config import configure_logging, request_id_var
+from .metrics import record_http_request, record_outcome
 from .models import CheckResult
 from .scheduler import reconcile_jobs, setup_scheduler
 from .service_config import ServiceConfig, load_services
+from .tracing import configure_tracing
+
+# Configure logging once, at entrypoint import, before anything emits a record.
+configure_logging(settings.log_level, settings.log_format)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +108,40 @@ class ServiceStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+async def _leadership_loop(scheduler: object, leader: LeaderLock, ttl: int) -> None:
+    """Resume the scheduler while this instance is leader, pause it otherwise.
+
+    Runs forever (until cancelled at shutdown), re-acquiring or renewing the
+    lock every ``ttl/2`` seconds so a dead leader is replaced within one TTL.
+    """
+    was_leader = False
+    interval = max(1, ttl // 2)
+    errors = 0
+    while True:
+        try:
+            is_leader = await leader.acquire_or_renew()
+            errors = 0
+        except Exception:
+            errors += 1
+            # While Redis is unreachable no peer can acquire the lock either, so
+            # hold leadership through a brief blip (up to one TTL) rather than
+            # pausing the whole fleet on the first transient error.
+            if was_leader and errors * interval < ttl:
+                logger.warning("leader renew failed (attempt %d); holding leadership", errors)
+                await asyncio.sleep(interval)
+                continue
+            logger.exception("leader election check failed; standing by")
+            is_leader = False
+        if is_leader and not was_leader:
+            scheduler.resume()  # type: ignore[attr-defined]
+            logger.info("acquired leadership (%s) — scheduler running", leader.instance_id)
+        elif not is_leader and was_leader:
+            scheduler.pause()  # type: ignore[attr-defined]
+            logger.info("lost leadership — scheduler paused, standing by")
+        was_leader = is_leader
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     init_db()
@@ -117,21 +162,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.telegram_bot_token and settings.telegram_chat_id:
         providers.append(TelegramProvider(settings.telegram_bot_token, settings.telegram_chat_id))
 
+    # Redis is needed for alert dedup and/or HA leader election.
     redis_client: Redis[bytes] | None = None
     notifier: Notifier | None = None
-    if providers:
+    if providers or settings.ha_enabled:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=False)
+    if providers and redis_client is not None:
         notifier = Notifier(redis_client, providers, settings.failure_threshold)
 
-    # Exposed to the readiness probe so it can verify Redis when alerting is on.
+    # Exposed to the readiness probe so it can verify Redis when in use.
     app.state.redis = redis_client
 
     scheduler = setup_scheduler(
         services, SessionLocal, notifier, retention_days=settings.retention_days
     )
-    # Always start the scheduler so /reload can add the first jobs at runtime
-    # even when the file was empty/missing at boot.
-    scheduler.start()
+
+    # With HA on, start paused and let the leadership loop resume us once this
+    # instance wins the election — so standbys never run checks. Otherwise start
+    # immediately so /reload can add the first jobs at runtime.
+    ha_active = settings.ha_enabled and redis_client is not None
+    scheduler.start(paused=ha_active)
+
+    leader_task: asyncio.Task[None] | None = None
+    leader: LeaderLock | None = None
+    if ha_active and redis_client is not None:
+        leader = LeaderLock(redis_client, ttl=settings.leader_ttl)
+        leader_task = asyncio.create_task(
+            _leadership_loop(scheduler, leader, settings.leader_ttl)
+        )
+        logger.info("HA enabled — instance %s competing for leadership", leader.instance_id)
 
     # Exposed to /reload so it can reconcile jobs without a restart.
     app.state.scheduler = scheduler
@@ -139,6 +198,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
+    if leader_task is not None:
+        leader_task.cancel()
+        try:
+            await leader_task
+        except asyncio.CancelledError:
+            pass
+    if leader is not None:
+        await leader.release()
     scheduler.shutdown(wait=False)
     if redis_client is not None:
         await redis_client.aclose()  # type: ignore[attr-defined]
@@ -148,6 +215,75 @@ _STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
+
+
+def _route_path(request: Request) -> str:
+    """Matched route template (e.g. ``/history``), or a fixed label if unmatched.
+
+    Using the template instead of ``request.url.path`` keeps metric cardinality
+    bounded — query strings and path params never become distinct series.
+    """
+    route = request.scope.get("route")
+    return str(getattr(route, "path", "") or "__unmatched__")
+
+
+@app.middleware("http")
+async def metrics_middleware(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    """Record request count + latency per route, exposed at ``/metrics``.
+
+    The scrape endpoint itself is excluded so Prometheus polling doesn't inflate
+    the API's own request metrics.
+    """
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration = time.perf_counter() - start
+        path = _route_path(request)
+        if path != "/metrics":
+            record_http_request(request.method, path, 500, duration)
+        raise
+    duration = time.perf_counter() - start
+    path = _route_path(request)
+    if path != "/metrics":
+        record_http_request(request.method, path, response.status_code, duration)
+    return response
+
+
+_REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _sanitize_request_id(value: str) -> str:
+    """Strip anything but safe id chars (and cap length) before it hits logs."""
+    cleaned = _REQUEST_ID_RE.sub("", value)[:64]
+    return cleaned or uuid.uuid4().hex
+
+
+@app.middleware("http")
+async def correlation_middleware(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    """Attach a correlation id to every request — reused if the caller sent one.
+
+    Stored in a context var so all logs emitted while handling the request carry
+    it, and echoed back in the ``X-Request-ID`` response header for tracing. A
+    caller-supplied id is sanitized to prevent log injection.
+    """
+    incoming = request.headers.get("x-request-id")
+    rid = _sanitize_request_id(incoming) if incoming else uuid.uuid4().hex
+    token = request_id_var.set(rid)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+    finally:
+        request_id_var.reset(token)
+
+
+# Distributed tracing — no-op unless MONITOR_OTEL_ENABLED and the `otel` extra.
+configure_tracing(app)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -357,7 +493,7 @@ async def get_history(
     stmt = (
         select(CheckResult)
         .where(CheckResult.name == service)
-        .order_by(CheckResult.created_at.desc())
+        .order_by(CheckResult.created_at.desc(), CheckResult.id.desc())
         .limit(limit)
     )
     rows = session.execute(stmt).scalars().all()
@@ -376,7 +512,22 @@ async def get_history(
 
 
 @app.post("/checks/run", response_model=CheckResponse, dependencies=[AuthDep])
-async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
+async def run_check(req: CheckRequest, request: Request, session: SessionDep) -> CheckResponse:
+    # SSRF guard: only run a check that matches a service declared in
+    # services.yaml, so a caller can never point the monitor at an arbitrary
+    # host/port (the scheduled checks are operator-controlled; this endpoint is
+    # the one place a target could otherwise be attacker-supplied).
+    svc = next((s for s in request.app.state.services if s.name == req.name), None)
+    if (
+        svc is None
+        or svc.type != req.type
+        or svc.target != req.target
+        or (svc.port or None) != (req.port or None)
+    ):
+        raise HTTPException(
+            status_code=403, detail="checks can only be run for a configured service"
+        )
+
     check = _build_check(req)
     outcome = await check.run()
 

@@ -13,4 +13,7 @@ class TelegramProvider:
     async def send(self, message: str) -> None:
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(url, json={"chat_id": self._chat_id, "text": message})
+            response = await client.post(url, json={"chat_id": self._chat_id, "text": message})
+            # Raise on 4xx/5xx so the Notifier logs a failed delivery instead of
+            # silently dropping the alert (e.g. a bad token or chat id).
+            response.raise_for_status()

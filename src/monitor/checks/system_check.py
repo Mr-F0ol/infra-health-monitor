@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import psutil
@@ -24,11 +25,9 @@ class SystemCheck(BaseCheck):
     check_type: str = field(default="system", init=False)
 
     async def run(self) -> CheckOutcome:
-        # A short interval forces psutil to sample over a real window; with
-        # ``interval=None`` the first call after process start always returns 0.0.
-        cpu = psutil.cpu_percent(interval=0.1)
-        memory = psutil.virtual_memory().percent
-        disk = psutil.disk_usage(self.target or "/").percent
+        # psutil.cpu_percent(interval=...) blocks; sample off the event loop so a
+        # system check never stalls request handling.
+        cpu, memory, disk = await asyncio.to_thread(self._sample)
 
         detail = f"cpu={cpu}% mem={memory}% disk={disk}%"
         breached = (
@@ -38,3 +37,11 @@ class SystemCheck(BaseCheck):
         )
         state = CheckState.DEGRADED if breached else CheckState.UP
         return self._outcome(state, detail=detail)
+
+    def _sample(self) -> tuple[float, float, float]:
+        # A short interval forces psutil to sample over a real window; with
+        # ``interval=None`` the first call after process start always returns 0.0.
+        cpu = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory().percent
+        disk = psutil.disk_usage(self.target or "/").percent
+        return cpu, memory, disk

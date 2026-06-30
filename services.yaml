@@ -12,59 +12,64 @@ services:
   - name: github
     type: http
     target: https://github.com
-    interval: 120
+    interval: 60
 
   - name: cloudflare
     type: http
     target: https://www.cloudflare.com
-    interval: 120
+    interval: 60
 
   - name: youtube
     type: http
     target: https://www.youtube.com
-    interval: 120
+    interval: 60
 
   - name: duckduckgo
     type: http
     target: https://duckduckgo.com
-    interval: 120
+    interval: 60
 
   - name: microsoft
     type: http
     target: https://www.microsoft.com
-    interval: 120
+    interval: 60
 
   - name: apple
     type: http
     target: https://www.apple.com
-    interval: 120
+    interval: 60
 
   - name: amazon
     type: http
     target: https://www.amazon.com
-    interval: 120
+    interval: 60
 
   - name: spotify
     type: http
     target: https://www.spotify.com
-    interval: 120
+    interval: 60
 
   - name: netflix
     type: http
     target: https://www.netflix.com
-    interval: 120
+    interval: 60
 
   - name: pypi
     type: http
     target: https://pypi.org
-    interval: 120
+    interval: 60
     thresholds:
       cert_expiry_days: 14
 
   - name: gitlab
     type: http
     target: https://gitlab.com
-    interval: 120
+    interval: 60
+
+  - name: academia-org-br
+    type: http
+    target: https://www.academia.org.br
+    interval: 60
 
   - name: local-postgres
     type: tcp

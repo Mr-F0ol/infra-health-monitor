@@ -11,4 +11,7 @@ class DiscordProvider:
 
     async def send(self, message: str) -> None:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(self._url, json={"content": message})
+            response = await client.post(self._url, json={"content": message})
+            # Raise on 4xx/5xx so the Notifier logs a failed delivery instead of
+            # silently dropping the alert (e.g. a wrong/expired webhook URL).
+            response.raise_for_status()

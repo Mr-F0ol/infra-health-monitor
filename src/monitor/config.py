@@ -14,6 +14,17 @@ class Settings(BaseSettings):
     app_name: str = "infra-health-monitor"
     debug: bool = False
 
+    # Logging — "text" (human-readable, the local-dev default) or "json"
+    # (one structured object per line for log aggregators; set in the image).
+    log_level: str = "INFO"
+    log_format: str = "text"
+
+    # Distributed tracing (OpenTelemetry) — opt-in and requires the `otel` extra
+    # (`pip install '.[otel]'`). Exports spans via OTLP to a collector/backend.
+    otel_enabled: bool = False
+    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+    otel_service_name: str = "infra-health-monitor"
+
     database_url: str = "sqlite:///./monitor.db"
     redis_url: str = "redis://localhost:6379/0"
     services_file: str = "services.yaml"
@@ -29,6 +40,12 @@ class Settings(BaseSettings):
 
     # Days of check history to retain in the database (0 = keep forever).
     retention_days: int = 30
+
+    # High availability: when enabled, replicas elect a single leader via a
+    # Redis lock and only the leader runs checks (others are warm standbys).
+    # Requires Redis. Off by default — a single instance needs no election.
+    ha_enabled: bool = False
+    leader_ttl: int = 30
 
     # Alert providers — leave empty to disable
     discord_webhook_url: str = ""
