@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -115,10 +116,20 @@ async def _leadership_loop(scheduler: object, leader: LeaderLock, ttl: int) -> N
     """
     was_leader = False
     interval = max(1, ttl // 2)
+    errors = 0
     while True:
         try:
             is_leader = await leader.acquire_or_renew()
+            errors = 0
         except Exception:
+            errors += 1
+            # While Redis is unreachable no peer can acquire the lock either, so
+            # hold leadership through a brief blip (up to one TTL) rather than
+            # pausing the whole fleet on the first transient error.
+            if was_leader and errors * interval < ttl:
+                logger.warning("leader renew failed (attempt %d); holding leadership", errors)
+                await asyncio.sleep(interval)
+                continue
             logger.exception("leader election check failed; standing by")
             is_leader = False
         if is_leader and not was_leader:
@@ -241,6 +252,15 @@ async def metrics_middleware(
     return response
 
 
+_REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _sanitize_request_id(value: str) -> str:
+    """Strip anything but safe id chars (and cap length) before it hits logs."""
+    cleaned = _REQUEST_ID_RE.sub("", value)[:64]
+    return cleaned or uuid.uuid4().hex
+
+
 @app.middleware("http")
 async def correlation_middleware(
     request: Request, call_next: RequestResponseEndpoint
@@ -248,9 +268,11 @@ async def correlation_middleware(
     """Attach a correlation id to every request — reused if the caller sent one.
 
     Stored in a context var so all logs emitted while handling the request carry
-    it, and echoed back in the ``X-Request-ID`` response header for tracing.
+    it, and echoed back in the ``X-Request-ID`` response header for tracing. A
+    caller-supplied id is sanitized to prevent log injection.
     """
-    rid = request.headers.get("x-request-id") or uuid.uuid4().hex
+    incoming = request.headers.get("x-request-id")
+    rid = _sanitize_request_id(incoming) if incoming else uuid.uuid4().hex
     token = request_id_var.set(rid)
     try:
         response = await call_next(request)
@@ -490,7 +512,22 @@ async def get_history(
 
 
 @app.post("/checks/run", response_model=CheckResponse, dependencies=[AuthDep])
-async def run_check(req: CheckRequest, session: SessionDep) -> CheckResponse:
+async def run_check(req: CheckRequest, request: Request, session: SessionDep) -> CheckResponse:
+    # SSRF guard: only run a check that matches a service declared in
+    # services.yaml, so a caller can never point the monitor at an arbitrary
+    # host/port (the scheduled checks are operator-controlled; this endpoint is
+    # the one place a target could otherwise be attacker-supplied).
+    svc = next((s for s in request.app.state.services if s.name == req.name), None)
+    if (
+        svc is None
+        or svc.type != req.type
+        or svc.target != req.target
+        or (svc.port or None) != (req.port or None)
+    ):
+        raise HTTPException(
+            status_code=403, detail="checks can only be run for a configured service"
+        )
+
     check = _build_check(req)
     outcome = await check.run()
 

@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from .alerts.notifier import Notifier
 from .checks import HttpCheck, SystemCheck, TcpCheck
 from .checks.base import BaseCheck
-from .metrics import record_outcome
+from .metrics import clear_service, record_outcome
 from .models import CheckResult
 from .service_config import ServiceConfig
 
@@ -151,6 +151,10 @@ def reconcile_jobs(
 
     for name in live.keys() - desired.keys():
         scheduler.remove_job(_job_id(name))
+        # Drop the gone service's metric series so stale gauges don't keep firing
+        # alerts. The removed service's config is still on its job's args.
+        removed_svc = live[name].args[0]
+        clear_service(name, removed_svc.type)
         removed.append(name)
 
     for name, svc in desired.items():

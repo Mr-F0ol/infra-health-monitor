@@ -155,3 +155,21 @@ def test_run_check_system_persists_and_returns(client):
     # The result was persisted and is visible via /checks/results.
     results = client.get("/checks/results", params={"limit": 10}).json()
     assert any(r["name"] == _SVC for r in results)
+
+
+def test_run_check_rejects_unconfigured_service(client):
+    # SSRF guard: an unknown service name cannot be probed.
+    resp = client.post(
+        "/checks/run",
+        json={"name": "evil", "type": "http", "target": "http://169.254.169.254"},
+    )
+    assert resp.status_code == 403
+
+
+def test_run_check_rejects_target_override(client):
+    # Known name but a different target must not let the caller redirect the probe.
+    resp = client.post(
+        "/checks/run",
+        json={"name": _SVC, "type": "system", "target": "/etc/shadow"},
+    )
+    assert resp.status_code == 403

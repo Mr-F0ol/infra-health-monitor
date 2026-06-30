@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from prometheus_client import generate_latest
 
+from monitor.checks.base import CheckState
 from monitor.main import app
+from monitor.metrics import clear_service, record_outcome
 
 # No lifespan context manager: these tests exercise dependency-free endpoints
 # (/health, /metrics) without starting the scheduler.
@@ -26,3 +29,10 @@ def test_metrics_endpoint_not_self_counted() -> None:
     client.get("/metrics")
     body = client.get("/metrics").text
     assert 'path="/metrics"' not in body
+
+
+def test_clear_service_drops_series() -> None:
+    record_outcome("temp-svc", "http", CheckState.DOWN, 10.0)
+    assert b'service="temp-svc"' in generate_latest()
+    clear_service("temp-svc", "http")
+    assert b'service="temp-svc"' not in generate_latest()

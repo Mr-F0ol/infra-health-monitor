@@ -52,7 +52,6 @@ _STATE_VALUES: dict[CheckState, float] = {
     CheckState.UP: 1.0,
     CheckState.DEGRADED: 0.0,
     CheckState.DOWN: -1.0,
-    CheckState.UNKNOWN: 0.0,
 }
 
 
@@ -64,7 +63,10 @@ def record_outcome(
     cert_days_remaining: float | None = None,
 ) -> None:
     labels = {"service": name, "type": check_type}
-    service_status.labels(**labels).set(_STATE_VALUES.get(state, 0.0))
+    # UNKNOWN is never the outcome of a real check; skip it rather than emit an
+    # ambiguous 0 that would be indistinguishable from DEGRADED.
+    if state in _STATE_VALUES:
+        service_status.labels(**labels).set(_STATE_VALUES[state])
     checks_total.labels(**labels).inc()
     if state in (CheckState.DOWN, CheckState.DEGRADED):
         checks_failed_total.labels(**labels).inc()
@@ -72,6 +74,25 @@ def record_outcome(
         check_latency_ms.labels(**labels).observe(latency_ms)
     if cert_days_remaining is not None:
         cert_expiry_days.labels(service=name).set(cert_days_remaining)
+
+
+def clear_service(name: str, check_type: str) -> None:
+    """Drop a service's metric series so a removed service stops being reported.
+
+    Without this, ``monitor_service_status`` keeps its last value after a service
+    is removed via /reload, and a stale DOWN/DEGRADED value would keep firing the
+    Prometheus ServiceDown/Degraded alerts for a service that no longer exists.
+    """
+    labels = {"service": name, "type": check_type}
+    for metric in (service_status, check_latency_ms, checks_total, checks_failed_total):
+        try:
+            metric.remove(*labels.values())
+        except KeyError:
+            pass  # never recorded for this service — nothing to drop
+    try:
+        cert_expiry_days.remove(name)
+    except KeyError:
+        pass
 
 
 def record_http_request(

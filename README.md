@@ -127,7 +127,7 @@ services:
 | GET | `/metrics` | Prometheus exposition format |
 | GET | `/uptime?window=24h\|7d\|30d` | Availability % per service over a rolling window |
 | POST | `/reload` | Re-read `services.yaml` and reconcile scheduler jobs live |
-| POST | `/checks/run` | Run a one-off check immediately |
+| POST | `/checks/run` | Run a check now for a configured service (target must match `services.yaml`) |
 | GET | `/checks/results` | Recent check results |
 
 ### Reloading config without a restart

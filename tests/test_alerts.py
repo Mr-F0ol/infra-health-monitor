@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+
+import httpx
+import pytest
 
 from monitor.alerts.discord import DiscordProvider
 from monitor.alerts.notifier import Notifier
@@ -179,6 +182,34 @@ async def test_discord_provider_posts_to_webhook():
 # ---------------------------------------------------------------------------
 # Telegram provider
 # ---------------------------------------------------------------------------
+
+
+def _client_returning_status_error(mock_cls: Mock, status: str) -> None:
+    """Wire a mocked AsyncClient whose response.raise_for_status() raises."""
+    mock_client = AsyncMock()
+    mock_cls.return_value.__aenter__.return_value = mock_client
+    response = Mock()  # the awaited response is sync, like a real httpx.Response
+    response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        status, request=Mock(), response=Mock()
+    )
+    mock_client.post = AsyncMock(return_value=response)
+
+
+async def test_discord_provider_raises_on_error_status():
+    """A 4xx/5xx from the webhook must surface, not be silently swallowed."""
+    with patch("httpx.AsyncClient") as mock_cls:
+        _client_returning_status_error(mock_cls, "500")
+        provider = DiscordProvider("https://discord.com/api/webhooks/123/abc")
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.send("boom")
+
+
+async def test_telegram_provider_raises_on_error_status():
+    with patch("httpx.AsyncClient") as mock_cls:
+        _client_returning_status_error(mock_cls, "401")
+        provider = TelegramProvider("BADTOKEN", "-100999")
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.send("boom")
 
 
 async def test_telegram_provider_posts_to_api():
