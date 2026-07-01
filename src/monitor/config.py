@@ -59,5 +59,12 @@ class Settings(BaseSettings):
     basic_auth_user: str = ""
     basic_auth_password: str = ""
 
+    # Per-IP request rate limiting — basic abuse protection, on by default.
+    # In-memory, fixed-window per client IP. /health, /ready and /metrics are
+    # always exempt so orchestrators and Prometheus are never throttled.
+    rate_limit_enabled: bool = True
+    rate_limit_per_window: int = 100
+    rate_limit_window_seconds: int = 60
+
 
 settings = Settings()

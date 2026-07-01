@@ -20,7 +20,6 @@ htmlcov/
 # Runtime
 *.db
 *.log
-uvicorn.log
 
 # Environment
 .env
