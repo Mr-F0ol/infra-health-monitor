@@ -282,6 +282,48 @@ async def correlation_middleware(
         request_id_var.reset(token)
 
 
+_RATE_LIMIT_EXEMPT_PATHS = {"/health", "/ready", "/metrics"}
+_rate_limit_window = 0
+_rate_limit_counts: dict[str, int] = {}
+
+
+@app.middleware("http")
+async def rate_limit_middleware(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    """Per-IP fixed-window rate limit — basic defense against abuse/scraping.
+
+    In-memory and per-instance: under ``MONITOR_HA_ENABLED`` each replica
+    counts independently rather than sharing one global count. All counters
+    reset together on each window boundary, so memory never grows unbounded.
+    """
+    if not settings.rate_limit_enabled or request.url.path in _RATE_LIMIT_EXEMPT_PATHS:
+        return await call_next(request)
+
+    global _rate_limit_window
+    now = time.time()
+    window = int(now // settings.rate_limit_window_seconds)
+    if window != _rate_limit_window:
+        _rate_limit_counts.clear()
+        _rate_limit_window = window
+
+    client_ip = request.client.host if request.client else "unknown"
+    count = _rate_limit_counts.get(client_ip, 0) + 1
+    _rate_limit_counts[client_ip] = count
+
+    if count > settings.rate_limit_per_window:
+        logger.warning("rate limit exceeded for %s on %s", client_ip, request.url.path)
+        window_s = settings.rate_limit_window_seconds
+        retry_after = window_s - int(now % window_s)
+        return JSONResponse(
+            {"detail": "rate limit exceeded, try again later"},
+            status_code=429,
+            headers={"Retry-After": str(max(retry_after, 1))},
+        )
+
+    return await call_next(request)
+
+
 # Distributed tracing — no-op unless MONITOR_OTEL_ENABLED and the `otel` extra.
 configure_tracing(app)
 
