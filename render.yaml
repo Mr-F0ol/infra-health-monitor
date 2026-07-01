@@ -1,0 +1,18 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# In the Render dashboard: New + -> Blueprint -> select this repo -> Apply.
+# Free tier: no persistent disk, so history resets on redeploy/sleep-wake;
+# the scheduler starts repopulating it within one check interval (60s).
+services:
+  - type: web
+    name: infra-health-monitor
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: MONITOR_LOG_FORMAT
+        value: json
+      - key: MONITOR_SERVICES_FILE
+        value: services.demo.yaml
+      - key: MONITOR_RATE_LIMIT_ENABLED
+        value: "true"

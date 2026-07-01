@@ -1,0 +1,76 @@
+services:
+  - name: warframefool
+    type: http
+    target: https://warframefool.vercel.app
+    interval: 60
+
+  - name: google
+    type: http
+    target: https://www.google.com
+    interval: 60
+
+  - name: github
+    type: http
+    target: https://github.com
+    interval: 60
+
+  - name: cloudflare
+    type: http
+    target: https://www.cloudflare.com
+    interval: 60
+
+  - name: youtube
+    type: http
+    target: https://www.youtube.com
+    interval: 60
+
+  - name: duckduckgo
+    type: http
+    target: https://duckduckgo.com
+    interval: 60
+
+  - name: microsoft
+    type: http
+    target: https://www.microsoft.com
+    interval: 60
+
+  - name: apple
+    type: http
+    target: https://www.apple.com
+    interval: 60
+
+  - name: amazon
+    type: http
+    target: https://www.amazon.com
+    interval: 60
+
+  - name: spotify
+    type: http
+    target: https://www.spotify.com
+    interval: 60
+
+  - name: netflix
+    type: http
+    target: https://www.netflix.com
+    interval: 60
+
+  - name: pypi
+    type: http
+    target: https://pypi.org
+    interval: 60
+    thresholds:
+      cert_expiry_days: 14
+
+  - name: gitlab
+    type: http
+    target: https://gitlab.com
+    interval: 60
+
+  - name: local-system
+    type: system
+    target: /
+    interval: 60
+    thresholds:
+      cpu: 90.0
+      memory: 90.0
+      disk: 90.0
